@@ -120,25 +120,29 @@ def transcribe_audio(audio_bytes):
     return None if text in ("", "[unclear]") else text
 
 
-def reply_to(user_text, image_bytes=None, image_mime="image/jpeg"):
-    """Show the user's message (with optional photo), then stream Veda AI's reply like ChatGPT."""
-    display_text = user_text or "ఈ ఫోటో గురించి చెప్పు · Tell me about this photo"
+def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
+    """Show the user's message (with optional photo/PDF/file), then stream Veda AI's reply like ChatGPT."""
+    is_image = bool(attach_mime and attach_mime.startswith("image/"))
+    if not user_text:
+        user_text = "ఈ ఫైల్ గురించి చెప్పు · Tell me about this file"
     st.session_state.messages.append({
         "role": "user",
-        "text": display_text,
-        "image": image_bytes,
-        "image_mime": image_mime,
+        "text": user_text,
+        "image": attach_bytes if is_image else None,
+        "file_name": attach_name if (attach_bytes and not is_image) else None,
     })
     with st.chat_message("user"):
-        if image_bytes:
-            st.image(image_bytes, width=260)
-        st.markdown(display_text)
+        if attach_bytes and is_image:
+            st.image(attach_bytes, width=260)
+        elif attach_bytes:
+            st.caption(f"📎 {attach_name}")
+        st.markdown(user_text)
 
     # Build a Gemini chat with the full history so it remembers the conversation
     history = [
         types.Content(
             role=m["role"],
-            parts=[types.Part.from_text(text=("📷 " if m.get("image") else "") + m["text"])],
+            parts=[types.Part.from_text(text=("📷 " if m.get("image") else ("📎 " if m.get("file_name") else "")) + m["text"])],
         )
         for m in st.session_state.messages[:-1]  # everything before this message
     ]
@@ -157,9 +161,19 @@ def reply_to(user_text, image_bytes=None, image_mime="image/jpeg"):
             for attempt in range(4):
                 try:
                     msg_parts = []
-                    if image_bytes:
-                        msg_parts.append(types.Part.from_bytes(data=image_bytes, mime_type=image_mime))
-                    msg_parts.append(types.Part.from_text(text=display_text))
+                    if attach_bytes and is_image:
+                        msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type=attach_mime))
+                    elif attach_bytes and attach_mime == "application/pdf":
+                        msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type="application/pdf"))
+                    elif attach_bytes:
+                        try:
+                            file_text = attach_bytes.decode("utf-8", errors="ignore")
+                            msg_parts.append(types.Part.from_text(
+                                text=f"--- File: {attach_name} ---\n{file_text[:200000]}\n--- End of file ---"
+                            ))
+                        except Exception:
+                            msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type=attach_mime or "application/octet-stream"))
+                    msg_parts.append(types.Part.from_text(text=user_text))
 
                     def reply_stream():
                         for chunk in chat.send_message_stream(msg_parts):
@@ -192,6 +206,8 @@ for msg in st.session_state.messages:
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         if msg.get("image"):
             st.image(msg["image"], width=260)
+        elif msg.get("file_name"):
+            st.caption(f"📎 {msg['file_name']}")
         st.markdown(msg["text"])
 
 # 🎙️ Mic + typing in one box - the mic sits right next to the send button
@@ -199,12 +215,12 @@ prompt = st.chat_input(
     "Veda AI తో మాట్లాడండి... · Talk to Veda AI...",
     accept_audio=True,
     accept_file=True,
-    file_type=["jpg", "jpeg", "png", "webp", "gif"],
+    file_type=["jpg", "jpeg", "png", "webp", "gif", "pdf", "txt", "md", "csv", "json", "py"],
 )
 if prompt:
     if getattr(prompt, "files", None):
-        photo = prompt.files[0]
-        reply_to(prompt.text or "", photo.read(), getattr(photo, "type", None) or "image/jpeg")
+        up = prompt.files[0]
+        reply_to(prompt.text or "", up.read(), getattr(up, "type", None) or "", getattr(up, "name", "file"))
     elif getattr(prompt, "audio", None) is not None:
         audio_bytes = prompt.audio.read()
         audio_hash = hashlib.md5(audio_bytes).hexdigest()
