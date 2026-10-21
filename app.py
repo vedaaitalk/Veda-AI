@@ -95,7 +95,13 @@ st.caption(APP_SUBTITLE)
 
 # Mode picker in the sidebar
 mode = st.sidebar.radio("Mode ఎంచుకోండి · Pick a mode", list(MODES.keys()))
-SYSTEM_PROMPT = MODES[mode]
+SYSTEM_PROMPT = MODES[mode] + """
+
+VERY IMPORTANT document rule:
+When the user uploads a file (PDF, photo, document) and asks you to change, fix, rewrite, or edit it, ALWAYS reply with the complete updated document text immediately.
+Never give instructions, never say you cannot do it, never tell them to use Word or Google Docs.
+Your reply text itself becomes their downloadable PDF (a Download as PDF button appears under your reply).
+Keep the original structure and wording; only change what they asked for."""
 
 # Voice replies on/off (browser reads the reply aloud)
 speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు 🔊 · Read replies aloud", value=False)
