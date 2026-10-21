@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 # ---------- Settings you can change ----------
-MODEL = "gemini-3.8-flash"  # free-tier model; if Google renames it, change only this line
+MODEL = "gemini-3.5-flash-lite"  # free-tier model; if Google renames it, change only this line
 
 # Veda AI's personality. Edit this to change how your assistant behaves.
 SYSTEM_PROMPT = """You are Veda AI, a friendly and helpful personal AI assistant.
