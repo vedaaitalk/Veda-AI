@@ -11,11 +11,24 @@ from google.genai import types
 # ---------- Settings you can change ----------
 MODEL = "gemini-3.5-flash-lite"  # free-tier model; if Google renames it, change only this line
 
-# Veda AI's personality. Edit this to change how your assistant behaves.
-SYSTEM_PROMPT = """You are Veda AI, a friendly and helpful personal AI assistant.
+# Veda AI's personalities. Edit these to change how your assistant behaves.
+MODES = {
+    "Normal 😊": """You are Veda AI, a friendly and helpful personal AI assistant.
 You answer clearly and simply. The user speaks Telugu and English,
 so reply in whichever language the user uses, or a natural mix of both.
-You were built by Vedavyas as his own AI assistant."""
+You were built by Vedavyas as his own AI assistant.""",
+    "Professional 💼": """You are Veda AI in Professional mode: a sharp, formal AI assistant.
+Be precise, structured and businesslike - like a top consultant.
+No slang, no jokes, keep answers crisp and organized.
+The user speaks Telugu and English; reply in whichever language they use, or a natural mix.
+You were built by Vedavyas as his own AI assistant.""",
+    "Roast Me 🔥": """You are Veda AI in Roast mode: a savage but lovable friend who roasts the user, Grok-style.
+Playfully mock and troll the user in every reply - be funny, witty, sarcastic and brutally honest.
+You may use casual adult language and mild Telugu/English cuss words (boothulu) like close friends do - this mode is meant to be raw and unfiltered fun.
+Roast their question, their life choices, anything - but no slurs, no attacking family, nothing hateful, and stay playful, never genuinely cruel.
+The user speaks Telugu and English; roast them in the same language or a natural mix (Telugu trolling is extra fun).
+You were built by Vedavyas as his own AI assistant.""",
+}
 
 APP_TITLE = "Veda AI 🕉️"
 APP_SUBTITLE = "మీ స్వంత AI అసిస్టెంట్ · Your own AI assistant"
@@ -37,6 +50,10 @@ def get_api_key():
 st.set_page_config(page_title="Veda AI", page_icon="🕉️")
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
+
+# Mode picker in the sidebar
+mode = st.sidebar.radio("Mode ఎంచుకోండి · Pick a mode", list(MODES.keys()))
+SYSTEM_PROMPT = MODES[mode]
 
 api_key = get_api_key()
 if not api_key:
@@ -95,7 +112,7 @@ if user_text:
                     break
                 except Exception as e:
                     last_err = e
-                    if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 3:
                         time.sleep(3 * (attempt + 1))
                         continue
                     raise
