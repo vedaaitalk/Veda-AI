@@ -248,16 +248,17 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             if full_reply is None:
                 raise last_err
             st.session_state.messages.append({"role": "model", "text": full_reply})
-            try:
-                st.download_button(
-                    "📄 PDF గా download · Download as PDF",
-                    data=make_pdf(full_reply),
-                    file_name="veda-ai-reply.pdf",
-                    mime="application/pdf",
-                    key=f"dl_live_{len(st.session_state.messages)}",
-                )
-            except Exception:
-                pass
+            if len(full_reply) > 500:  # only document-length replies get the PDF button
+                try:
+                    st.download_button(
+                        "📄 PDF గా download · Download as PDF",
+                        data=make_pdf(full_reply),
+                        file_name="veda-ai-reply.pdf",
+                        mime="application/pdf",
+                        key=f"dl_live_{len(st.session_state.messages)}",
+                    )
+                except Exception:
+                    pass
             if speak_replies:
                 speak_text(full_reply)
         except Exception as e:
@@ -284,7 +285,7 @@ for i, msg in enumerate(st.session_state.messages):
             st.markdown(shown, unsafe_allow_html=True)
         else:
             st.markdown(msg["text"])
-        if msg["role"] == "model":
+        if msg["role"] == "model" and len(msg["text"]) > 500:  # documents only
             try:
                 st.download_button(
                     "📄 PDF గా download · Download as PDF",
