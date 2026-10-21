@@ -176,27 +176,25 @@ for msg in st.session_state.messages:
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         st.markdown(msg["text"])
 
-# 🎙️ Mic - talk instead of typing (works in Telugu + English)
-audio = st.audio_input("🎙️ మాట్లాడండి · Speak to Veda AI")
-if audio is not None:
-    audio_bytes = audio.read()
-    audio_hash = hashlib.md5(audio_bytes).hexdigest()
-    if audio_hash != st.session_state.last_audio_hash:
-        st.session_state.last_audio_hash = audio_hash
-        with st.spinner("వినిపిస్తోంది... · Listening..."):
-            try:
-                heard = transcribe_audio(audio_bytes)
-            except Exception:
-                heard = None
-        if heard:
-            reply_to(heard)
-        else:
-            st.warning(
-                "సరిగ్గా వినపడలేదు - మళ్ళీ చెప్పండి 😅\n\n"
-                "Couldn't hear that clearly - please say it again 😅"
-            )
-
-# Chat input box at the bottom
-user_text = st.chat_input("Veda AI తో మాట్లాడండి... · Talk to Veda AI...")
-if user_text:
-    reply_to(user_text)
+# 🎙️ Mic + typing in one box - the mic sits right next to the send button
+prompt = st.chat_input("Veda AI తో మాట్లాడండి... · Talk to Veda AI...", accept_audio=True)
+if prompt:
+    if getattr(prompt, "audio", None) is not None:
+        audio_bytes = prompt.audio.read()
+        audio_hash = hashlib.md5(audio_bytes).hexdigest()
+        if audio_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = audio_hash
+            with st.spinner("వినిపిస్తోంది... · Listening..."):
+                try:
+                    heard = transcribe_audio(audio_bytes)
+                except Exception:
+                    heard = None
+            if heard:
+                reply_to(heard)
+            else:
+                st.warning(
+                    "సరిగ్గా వినపడలేదు - మళ్ళీ చెప్పండి 😅\n\n"
+                    "Couldn't hear that clearly - please say it again 😅"
+                )
+    elif getattr(prompt, "text", None):
+        reply_to(prompt.text)
