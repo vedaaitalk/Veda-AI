@@ -30,7 +30,7 @@ Hard limits: no slurs, no attacking family, nothing hateful, nothing about self-
 You were built by Vedavyas as his own AI assistant.""",
 }
 
-APP_TITLE = "Veda AI 🕉️"
+APP_TITLE = "Veda AI"
 APP_SUBTITLE = "మీ స్వంత AI అసిస్టెంట్ · Your own AI assistant"
 # ---------------------------------------------
 
@@ -47,7 +47,7 @@ def get_api_key():
     return os.environ.get("GEMINI_API_KEY")
 
 
-st.set_page_config(page_title="Veda AI", page_icon="🕉️")
+st.set_page_config(page_title="Veda AI", page_icon="🤖")
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
