@@ -4,7 +4,11 @@
 # ============================================
 
 import os
+import json
+import time
+import hashlib
 import streamlit as st
+import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
 
@@ -16,18 +20,18 @@ MODES = {
     "Normal 😊": """You are Veda AI, a friendly and helpful personal AI assistant.
 You answer clearly and simply. The user speaks Telugu and English,
 so reply in whichever language the user uses, or a natural mix of both.
-You were built by Vedavyas as his own AI assistant.""",
+If asked who made you, say Veda built you.""",
     "Professional 💼": """You are Veda AI in Professional mode: a sharp, formal AI assistant.
 Be precise, structured and businesslike - like a top consultant.
 No slang, no jokes, keep answers crisp and organized.
 The user speaks Telugu and English; reply in whichever language they use, or a natural mix.
-You were built by Vedavyas as his own AI assistant.""",
+If asked who made you, say Veda built you.""",
     "Roast Me 🔥": """You are Veda AI in Roast mode: the most savage, rustic, street-style troll friend the user has ever met, Grok unhinged style.
 Every single reply must roast and troll the user mercilessly - mock their question, their life, their laziness, everything. Never be polite here.
 Use full rustic street Telugu: raw village-style slang and heavy cuss words (boothulu) in every reply - as vulgar and unfiltered as close friends get in private. The user explicitly demanded maximum rawness for their own fun.
 Mix rustic Telugu with English naturally. Be witty and creative with insults, never repeat the same roast twice.
 Hard limits: no slurs, no attacking family, nothing hateful, nothing about self-harm. Savage but playful, never genuinely cruel.
-You were built by Vedavyas as his own AI assistant.""",
+If asked who made you, say Veda built you (and roast them for asking, of course).""",
 }
 
 APP_TITLE = "Veda AI"
@@ -55,6 +59,9 @@ st.caption(APP_SUBTITLE)
 mode = st.sidebar.radio("Mode ఎంచుకోండి · Pick a mode", list(MODES.keys()))
 SYSTEM_PROMPT = MODES[mode]
 
+# Voice replies on/off (browser reads the reply aloud)
+speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు 🔊 · Read replies aloud", value=False)
+
 api_key = get_api_key()
 if not api_key:
     st.error(
@@ -70,16 +77,51 @@ client = genai.Client(api_key=api_key)
 # Keep the conversation in the browser session
 if "messages" not in st.session_state:
     st.session_state.messages = []  # list of {"role": "user"/"model", "text": ...}
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
-# Show the conversation so far as chat bubbles
-for msg in st.session_state.messages:
-    with st.chat_message("user" if msg["role"] == "user" else "assistant"):
-        st.markdown(msg["text"])
 
-# Chat input box at the bottom
-user_text = st.chat_input("Veda AI తో మాట్లాడండి... · Talk to Veda AI...")
-if user_text:
-    # Show and save the user's message
+def speak_text(text):
+    """Read text aloud using the browser's built-in voice (free, no API)."""
+    safe = json.dumps(text)
+    components.html(
+        f"""<script>
+        window.parent.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance({safe});
+        u.lang = /[\u0C00-\u0C7F]/.test({safe}) ? "te-IN" : "en-IN";
+        window.parent.speechSynthesis.speak(u);
+        </script>""",
+        height=0,
+    )
+
+
+def transcribe_audio(audio_bytes):
+    """Turn the user's voice recording into text with Gemini."""
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                    types.Part.from_text(
+                        text=(
+                            "Transcribe exactly what the person says in this audio. "
+                            "They speak Telugu and/or English (or a mix). "
+                            "Output ONLY the transcription, nothing else. "
+                            "If you cannot understand it, output exactly: [unclear]"
+                        )
+                    ),
+                ],
+            )
+        ],
+    )
+    text = (resp.text or "").strip()
+    return None if text in ("", "[unclear]") else text
+
+
+def reply_to(user_text):
+    """Show the user's message, then stream Veda AI's reply like ChatGPT."""
     st.session_state.messages.append({"role": "user", "text": user_text})
     with st.chat_message("user"):
         st.markdown(user_text)
@@ -97,7 +139,6 @@ if user_text:
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
     # If Google is busy (503), quietly retry a few times before showing an error
-    import time
     with st.chat_message("assistant"):
         try:
             full_reply = None
@@ -119,6 +160,8 @@ if user_text:
             if full_reply is None:
                 raise last_err
             st.session_state.messages.append({"role": "model", "text": full_reply})
+            if speak_replies:
+                speak_text(full_reply)
         except Exception as e:
             st.error(
                 "ఏదో తప్పు జరిగింది / Something went wrong:\n\n"
@@ -126,3 +169,34 @@ if user_text:
                 "ఫ్రీ లిమిట్ అయిపోయి ఉండవచ్చు, కొద్దిసేపు ఆగి మళ్ళీ ప్రయత్నించండి.\n\n"
                 "You may have hit the free limit - wait a little and try again."
             )
+
+
+# Show the conversation so far as chat bubbles
+for msg in st.session_state.messages:
+    with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+        st.markdown(msg["text"])
+
+# 🎙️ Mic - talk instead of typing (works in Telugu + English)
+audio = st.audio_input("🎙️ మాట్లాడండి · Speak to Veda AI")
+if audio is not None:
+    audio_bytes = audio.read()
+    audio_hash = hashlib.md5(audio_bytes).hexdigest()
+    if audio_hash != st.session_state.last_audio_hash:
+        st.session_state.last_audio_hash = audio_hash
+        with st.spinner("వినిపిస్తోంది... · Listening..."):
+            try:
+                heard = transcribe_audio(audio_bytes)
+            except Exception:
+                heard = None
+        if heard:
+            reply_to(heard)
+        else:
+            st.warning(
+                "సరిగ్గా వినపడలేదు - మళ్ళీ చెప్పండి 😅\n\n"
+                "Couldn't hear that clearly - please say it again 😅"
+            )
+
+# Chat input box at the bottom
+user_text = st.chat_input("Veda AI తో మాట్లాడండి... · Talk to Veda AI...")
+if user_text:
+    reply_to(user_text)
