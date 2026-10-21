@@ -58,7 +58,9 @@ def load_font_paths():
     import urllib.request
     urls = {
         "latin": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+        "latin-bold": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf",
         "telugu": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
+        "telugu-bold": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Bold.ttf",
     }
     paths = {}
     for name, url in urls.items():
@@ -71,21 +73,27 @@ def load_font_paths():
 
 
 def make_pdf(text):
-    """Turn a reply into a downloadable PDF (Telugu + English)."""
+    """Turn a reply into a downloadable PDF (Telugu + English, colors/bold/center)."""
     import re
     from fpdf import FPDF
-    # tidy up markdown + remove emoji the font can't draw
-    clean = re.sub(r"[#*>`]", "", text)
-    clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", clean)
+    clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", text)
+    clean = re.sub(r"<script.*?</script>", "", clean, flags=re.S | re.I)
     paths = load_font_paths()
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("noto", "", paths["latin"])
+    pdf.add_font("noto", "B", paths["latin-bold"])
     pdf.add_font("nototelugu", "", paths["telugu"])
+    pdf.add_font("nototelugu", "B", paths["telugu-bold"])
     pdf.set_font("noto", size=11)
     pdf.set_fallback_fonts(["nototelugu"])
-    pdf.multi_cell(0, 7, clean)
+    if re.search(r"<(div|span|b|i|p|h[1-6]|center|table|ul|ol|li|br|hr)[^>]*>", clean):
+        # formatted reply - render colors, bold, centering
+        pdf.write_html(clean)
+    else:
+        clean = re.sub(r"[#*>`]", "", clean)
+        pdf.multi_cell(0, 7, clean)
     return bytes(pdf.output())
 
 
@@ -101,7 +109,8 @@ VERY IMPORTANT document rule:
 When the user uploads a file (PDF, photo, document) and asks you to change, fix, rewrite, or edit it, ALWAYS reply with the complete updated document text immediately.
 Never give instructions, never say you cannot do it, never tell them to use Word or Google Docs.
 Your reply text itself becomes their downloadable PDF (a Download as PDF button appears under your reply).
-Keep the original structure and wording; only change what they asked for."""
+Keep the original structure and wording; only change what they asked for.
+When the user asks for formatting (centered text, colors, bold), use simple HTML like <div align="center">, <span style="color:#00BFFF">, <b> - the chat and PDF both render it. Never use <script>."""
 
 # Voice replies on/off (browser reads the reply aloud)
 speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు 🔊 · Read replies aloud", value=False)
@@ -269,7 +278,11 @@ for i, msg in enumerate(st.session_state.messages):
             st.pdf(msg["pdf"], height=350)
         elif msg.get("file_name"):
             st.caption(f"📎 {msg['file_name']}")
-        st.markdown(msg["text"])
+        if msg["role"] == "model":
+            shown = re.sub(r"<script.*?</script>", "", msg["text"], flags=re.S | re.I)
+            st.markdown(shown, unsafe_allow_html=True)
+        else:
+            st.markdown(msg["text"])
         if msg["role"] == "model":
             try:
                 st.download_button(
