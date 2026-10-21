@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 # ---------- Settings you can change ----------
-MODEL = "gemini-3.8-flash"  # free-tier model; if Google renames it, change only this line
+MODEL = "gemini-2.5-flash"  # free-tier model; if Google renames it, change only this line
 
 # Veda AI's personality. Edit this to change how your assistant behaves.
 SYSTEM_PROMPT = """You are Veda AI, a friendly and helpful personal AI assistant.
@@ -78,13 +78,15 @@ if user_text:
         history=history,
     )
 
-    # Get Veda AI's reply
+    # Get Veda AI's reply - streamed word by word like ChatGPT
     with st.chat_message("assistant"):
         try:
-            with st.spinner("ఆలోచిస్తున్నాను... · Thinking..."):
-                response = chat.send_message(user_text)
-            st.markdown(response.text)
-            st.session_state.messages.append({"role": "model", "text": response.text})
+            def reply_stream():
+                for chunk in chat.send_message_stream(user_text):
+                    if chunk.text:
+                        yield chunk.text
+            full_reply = st.write_stream(reply_stream())
+            st.session_state.messages.append({"role": "model", "text": full_reply})
         except Exception as e:
             st.error(
                 "ఏదో తప్పు జరిగింది / Something went wrong:\n\n"
