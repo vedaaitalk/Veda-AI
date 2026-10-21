@@ -51,6 +51,44 @@ def get_api_key():
     return os.environ.get("GEMINI_API_KEY")
 
 
+@st.cache_data(show_spinner=False)
+def load_font_paths():
+    """Download Noto fonts (English + Telugu) once, so PDFs can show Telugu text."""
+    import tempfile
+    import urllib.request
+    urls = {
+        "latin": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+        "telugu": "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf",
+    }
+    paths = {}
+    for name, url in urls.items():
+        data = urllib.request.urlopen(url, timeout=60).read()
+        path = os.path.join(tempfile.gettempdir(), f"noto-{name}.ttf")
+        with open(path, "wb") as f:
+            f.write(data)
+        paths[name] = path
+    return paths
+
+
+def make_pdf(text):
+    """Turn a reply into a downloadable PDF (Telugu + English)."""
+    import re
+    from fpdf import FPDF
+    # tidy up markdown + remove emoji the font can't draw
+    clean = re.sub(r"[#*>`]", "", text)
+    clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", clean)
+    paths = load_font_paths()
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.add_font("noto", "", paths["latin"])
+    pdf.add_font("nototelugu", "", paths["telugu"])
+    pdf.set_font("noto", size=11)
+    pdf.set_fallback_fonts(["nototelugu"])
+    pdf.multi_cell(0, 7, clean)
+    return bytes(pdf.output())
+
+
 st.set_page_config(page_title="Veda AI", page_icon="🤖")
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
@@ -194,6 +232,16 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             if full_reply is None:
                 raise last_err
             st.session_state.messages.append({"role": "model", "text": full_reply})
+            try:
+                st.download_button(
+                    "📄 PDF గా download · Download as PDF",
+                    data=make_pdf(full_reply),
+                    file_name="veda-ai-reply.pdf",
+                    mime="application/pdf",
+                    key=f"dl_live_{len(st.session_state.messages)}",
+                )
+            except Exception:
+                pass
             if speak_replies:
                 speak_text(full_reply)
         except Exception as e:
@@ -206,7 +254,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
 
 
 # Show the conversation so far as chat bubbles
-for msg in st.session_state.messages:
+for i, msg in enumerate(st.session_state.messages):
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         if msg.get("image"):
             st.image(msg["image"], width=260)
@@ -216,6 +264,17 @@ for msg in st.session_state.messages:
         elif msg.get("file_name"):
             st.caption(f"📎 {msg['file_name']}")
         st.markdown(msg["text"])
+        if msg["role"] == "model":
+            try:
+                st.download_button(
+                    "📄 PDF గా download · Download as PDF",
+                    data=make_pdf(msg["text"]),
+                    file_name="veda-ai-reply.pdf",
+                    mime="application/pdf",
+                    key=f"dl_{i}",
+                )
+            except Exception:
+                pass
 
 # 🎙️ Mic + typing in one box - the mic sits right next to the send button
 prompt = st.chat_input(
