@@ -79,13 +79,28 @@ if user_text:
     )
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
+    # If Google is busy (503), quietly retry a few times before showing an error
+    import time
     with st.chat_message("assistant"):
         try:
-            def reply_stream():
-                for chunk in chat.send_message_stream(user_text):
-                    if chunk.text:
-                        yield chunk.text
-            full_reply = st.write_stream(reply_stream())
+            full_reply = None
+            last_err = None
+            for attempt in range(4):
+                try:
+                    def reply_stream():
+                        for chunk in chat.send_message_stream(user_text):
+                            if chunk.text:
+                                yield chunk.text
+                    full_reply = st.write_stream(reply_stream())
+                    break
+                except Exception as e:
+                    last_err = e
+                    if "503" in str(e) or "UNAVAILABLE" in str(e):
+                        time.sleep(3 * (attempt + 1))
+                        continue
+                    raise
+            if full_reply is None:
+                raise last_err
             st.session_state.messages.append({"role": "model", "text": full_reply})
         except Exception as e:
             st.error(
