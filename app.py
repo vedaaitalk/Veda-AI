@@ -129,11 +129,15 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         "role": "user",
         "text": user_text,
         "image": attach_bytes if is_image else None,
+        "pdf": attach_bytes if attach_mime == "application/pdf" else None,
         "file_name": attach_name if (attach_bytes and not is_image) else None,
     })
     with st.chat_message("user"):
         if attach_bytes and is_image:
             st.image(attach_bytes, width=260)
+        elif attach_bytes and attach_mime == "application/pdf":
+            st.caption(f"📎 {attach_name}")
+            st.pdf(attach_bytes, height=350)
         elif attach_bytes:
             st.caption(f"📎 {attach_name}")
         st.markdown(user_text)
@@ -206,6 +210,9 @@ for msg in st.session_state.messages:
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         if msg.get("image"):
             st.image(msg["image"], width=260)
+        elif msg.get("pdf"):
+            st.caption(f"📎 {msg['file_name']}")
+            st.pdf(msg["pdf"], height=350)
         elif msg.get("file_name"):
             st.caption(f"📎 {msg['file_name']}")
         st.markdown(msg["text"])
