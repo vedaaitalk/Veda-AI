@@ -232,25 +232,35 @@ def copy_button(text):
 
 
 def generate_image(prompt_text):
-    """Draw an image with Gemini's image model (Nano Banana). Returns (PNG bytes or None, error text)."""
-    last_err = None
-    for model_name in (
-        "gemini-3.1-flash-image",
-        "gemini-3.1-flash-image-preview",
-        "gemini-2.5-flash-image",
-        "gemini-2.5-flash-image-preview",
-    ):
+    """Draw an image with a Gemini image model (Nano Banana). Returns (PNG bytes or None, error text).
+    Asks the API key which image models it can actually use, then tries them."""
+    errs = []
+    candidates = []
+    try:
+        for m in client.models.list():
+            short = (getattr(m, "name", "") or "").split("/")[-1]
+            if "image" in short and "imagen" not in short:
+                candidates.append(short)
+    except Exception as e:
+        errs.append(f"model list failed: {str(e)[:120]}")
+    ordered = [m for m in ("gemini-3.1-flash-image", "gemini-2.5-flash-image") if m in candidates]
+    for m in candidates:
+        if m not in ordered:
+            ordered.append(m)
+    if not ordered:
+        ordered = ["gemini-3.1-flash-image", "gemini-2.5-flash-image"]
+    for model_name in ordered:
         try:
             resp = client.models.generate_content(model=model_name, contents=prompt_text)
             for cand in resp.candidates or []:
                 for part in cand.content.parts:
                     if getattr(part, "inline_data", None) is not None:
                         return part.inline_data.data, None
-            last_err = "no image in reply"
+            errs.append(f"{model_name}: no image in reply")
         except Exception as e:
-            last_err = str(e)[:200]
+            errs.append(f"{model_name}: {str(e)[:120]}")
             continue
-    return None, last_err
+    return None, " | ".join(errs) or f"no image models on this key (found: {', '.join(candidates) or 'none'})"
 
 
 def transcribe_audio(audio_bytes, mime_type):
