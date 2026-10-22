@@ -194,7 +194,6 @@ st.session_state.memory = _more.text_area(
     "🧠 Memory · నీ గురించి గుర్తుంచుకునేవి (లేదా chat లో \"remember ...\" అని చెప్పండి)",
     value=st.session_state.get("memory", ""), height=110)
 dark_mode = _more.toggle("Dark mode 🌙", value=False)
-_more.toggle("Super natural voice 🎙️ (Gemini, uses quota)", value=False, key="voice_pro")
 if dark_mode:
     st.markdown("""
 <style>
@@ -302,7 +301,7 @@ def gemini_voice(text):
         contents=[{"role": "user", "parts": [{"text": text}]}],
         config={
             "response_modalities": ["AUDIO"],
-            "speech_config": {"voice_config": {"voice": "Kore"}},
+            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}},
         },
     )
     data = resp.candidates[0].content.parts[0].inline_data.data
@@ -373,12 +372,12 @@ def play_voice(text):
         return
     try:
         with st.spinner("వాయిస్ సిద్ధమవుతోంది... · Preparing voice..."):
-            if st.session_state.get("voice_pro"):
+            if True:  # super natural voice is the default
                 try:
                     st.audio(gemini_voice(spoken), format="audio/wav", autoplay=True)
                     return
                 except Exception as ge:
-                    st.caption(f"Super voice busy, using normal natural voice. ({str(ge)[:90]})")
+                    pass  # quietly use the free natural voice
             audio = natural_voice(spoken)
         if not audio:
             raise RuntimeError("empty audio")
