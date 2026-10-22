@@ -102,9 +102,15 @@ st.set_page_config(page_title="Veda AI", page_icon="🤖")
 # WhatsApp-style layout: my messages on the RIGHT, Veda AI on the LEFT
 st.markdown("""
 <style>
+/* whole user row flipped */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     flex-direction: row-reverse;
-    text-align: right;
+}
+/* text inside user bubble pushed to the right */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"],
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stMarkdown"],
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stMarkdown"] p {
+    text-align: right !important;
 }
 </style>
 """, unsafe_allow_html=True)
