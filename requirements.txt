@@ -2,3 +2,4 @@ streamlit
 google-genai
 streamlit-pdf
 fpdf2
+edge-tts
