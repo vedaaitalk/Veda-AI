@@ -168,7 +168,7 @@ def speak_text(text):
     )
 
 
-def transcribe_audio(audio_bytes):
+def transcribe_audio(audio_bytes, mime_type):
     """Turn the user's voice recording into text with Gemini."""
     resp = client.models.generate_content(
         model=MODEL,
@@ -176,13 +176,15 @@ def transcribe_audio(audio_bytes):
             types.Content(
                 role="user",
                 parts=[
-                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                    types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
                     types.Part.from_text(
                         text=(
-                            "Transcribe exactly what the person says in this audio. "
-                            "They speak Telugu and/or English (or a mix). "
-                            "Output ONLY the transcription, nothing else. "
-                            "If you cannot understand it, output exactly: [unclear]"
+                            "Listen very carefully and transcribe EXACTLY what the person says, word for word. "
+                            "The speaker is a Telugu person from India who casually mixes Telugu and English in one sentence. "
+                            "Write Telugu words phonetically in Latin letters (example: 'maadi rajahmundry', 'nenu office ki veltunna'), "
+                            "and English words in normal English. Do NOT translate, do NOT answer, do NOT add anything. "
+                            "Output ONLY the transcription. "
+                            "If you truly cannot understand anything, output exactly: [unclear]"
                         )
                     ),
                 ],
@@ -348,12 +350,13 @@ if prompt:
         reply_to(prompt.text or "", up.read(), getattr(up, "type", None) or "", getattr(up, "name", "file"))
     elif getattr(prompt, "audio", None) is not None:
         audio_bytes = prompt.audio.read()
+        audio_mime = getattr(prompt.audio, "type", None) or "audio/wav"
         audio_hash = hashlib.md5(audio_bytes).hexdigest()
         if audio_hash != st.session_state.last_audio_hash:
             st.session_state.last_audio_hash = audio_hash
             with st.spinner("వినిపిస్తోంది... · Listening..."):
                 try:
-                    heard = transcribe_audio(audio_bytes)
+                    heard = transcribe_audio(audio_bytes, audio_mime)
                 except Exception:
                     heard = None
             if heard:
