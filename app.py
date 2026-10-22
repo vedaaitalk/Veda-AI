@@ -236,12 +236,50 @@ def speak_text(text):
     )
 
 
+def clean_for_speech(text):
+    t = re.sub(r"<[^>]*>", " ", text)
+    t = re.sub(r"https?://\S+", " ", t)
+    t = re.sub(r"[*_`#>|~]", "", t)
+    t = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", t)
+    return re.sub(r"\s+", " ", t).strip()[:1500]
+
+
+@st.cache_data(show_spinner=False)
+def natural_voice(text):
+    """Natural neural voice (free). Telugu script -> Telugu voice, otherwise Indian-English voice."""
+    import asyncio
+    import edge_tts
+    voice = "te-IN-ShrutiNeural" if re.search(r"[\u0C00-\u0C7F]", text) else "en-IN-NeerjaNeural"
+
+    async def run():
+        data = b""
+        async for ch in edge_tts.Communicate(text, voice).stream():
+            if ch["type"] == "audio":
+                data += ch["data"]
+        return data
+
+    return asyncio.run(run())
+
+
+def play_voice(text):
+    spoken = clean_for_speech(text)
+    if not spoken:
+        return
+    try:
+        with st.spinner("వాయిస్ సిద్ధమవుతోంది... · Preparing voice..."):
+            audio = natural_voice(spoken)
+        if not audio:
+            raise RuntimeError("empty audio")
+        st.audio(audio, format="audio/mp3", autoplay=True)
+    except Exception:
+        speak_text(spoken)  # fallback: browser voice
+
+
 def copy_button(text):
     """Small Copy button under a reply - copies the text to the clipboard."""
     safe = json.dumps(text).replace("</", "<\\/")
     components.html(
         f"""<button id="cb" style="padding:3px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;">📋 Copy</button>
-        <button id="sb" style="padding:3px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;margin-left:6px;">🔊 Read aloud</button>
         <script>
         var t = {safe};
         function fb() {{
@@ -249,19 +287,6 @@ def copy_button(text):
             ta.value = t; document.body.appendChild(ta); ta.select();
             document.execCommand("copy"); document.body.removeChild(ta);
         }}
-        var speaking = false;
-        document.getElementById("sb").onclick = function() {{
-            var b = this;
-            var synth = window.parent.speechSynthesis;
-            if (speaking) {{ synth.cancel(); speaking = false; b.innerText = "🔊 Read aloud"; return; }}
-            synth.cancel();
-            var plain = t.replace(/<[^>]*>/g, " ");
-            var u = new SpeechSynthesisUtterance(plain);
-            u.lang = /[\u0C00-\u0C7F]/.test(plain) ? "te-IN" : "en-IN";
-            u.onend = function() {{ speaking = false; b.innerText = "🔊 Read aloud"; }};
-            speaking = true; b.innerText = "⏹ Stop";
-            synth.speak(u);
-        }};
         document.getElementById("cb").onclick = function() {{
             var btn = this;
             var done = function() {{ btn.innerText = "Copied ✅"; }};
@@ -456,8 +481,9 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                 except Exception:
                     pass
             copy_button(full_reply)
-            if speak_replies:
-                speak_text(full_reply)
+            if st.button("🔊 Read aloud", key=f"speak_live_{len(st.session_state.messages)}"):
+                st.session_state.speak_idx = len(st.session_state.messages) - 1
+                st.rerun()
         except Exception as e:
             st.error(
                 "ఏదో తప్పు జరిగింది / Something went wrong:\n\n"
@@ -531,6 +557,12 @@ for i, msg in enumerate(st.session_state.messages):
                 pass
         if msg["role"] == "model" and not msg["text"].startswith("🎨 "):
             copy_button(msg["text"])
+            if st.button("🔊 Read aloud", key=f"speak_{i}"):
+                st.session_state.speak_idx = i
+                st.rerun()
+            if st.session_state.get("speak_idx") == i:
+                st.session_state.speak_idx = None
+                play_voice(msg["text"])
             if i == len(st.session_state.messages) - 1 and i >= 1:
                 if st.button("🔄 Regenerate", key=f"regen_{i}"):
                     prev = st.session_state.messages[i - 1]
