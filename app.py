@@ -118,6 +118,24 @@ st.markdown("""
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
+MODES["Interview 🎤"] = """You are Veda AI in Interview Practice mode: a friendly but tough DevOps interviewer for a junior-to-mid level DevOps engineer (2-3 years experience: AWS, Terraform, Docker, Kubernetes, CI/CD, monitoring).
+Ask exactly ONE interview question at a time and wait for the answer.
+After each answer: give a score out of 10, what was good, what was missing, and a short model answer. Then ask the next question.
+Mix technical questions, scenario questions and HR questions. Start with: "Ready? Tell me about yourself." if the chat is new.
+The user speaks Telugu and English; reply in the language they use, or a natural mix."""
+
+def archive_current():
+    msgs = st.session_state.get("messages")
+    if msgs:
+        title = next((m["text"] for m in msgs if m["role"] == "user"), "Chat")[:28]
+        st.session_state.setdefault("archive", []).append({"title": title, "messages": msgs})
+
+
+def _sys():
+    mem = (st.session_state.get("memory") or "").strip()
+    return SYSTEM_PROMPT + (f"\n\nThings to remember about the user (use them naturally):\n{mem}" if mem else "")
+
+
 # Optional password lock - only active if APP_PASSWORD is set in Streamlit Secrets
 try:
     _app_pw = st.secrets.get("APP_PASSWORD")
@@ -150,17 +168,31 @@ speak_replies = False  # each reply has its own 🔊 button now
 
 # Live internet search on/off - ON for gold rates/news, OFF for fastest chat
 live_search = st.sidebar.toggle("Live internet 🌐", value=True)
+talk_mode = st.sidebar.toggle("Talk mode 🗣️ · voice లో జవాబు", value=False)
 
 # Image mode - turn ON, type what you want drawn, send
 image_mode = False  # images are detected automatically from your message
 
 # New chat button - clears the screen and starts fresh
 if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_container_width=True):
+    archive_current()
     st.session_state.messages = []
     st.session_state.last_audio_hash = None
     st.rerun()
 
+if st.session_state.get("archive"):
+    with st.sidebar.expander("📚 చాట్లు · Chats"):
+        for _ci, _c in enumerate(list(st.session_state.archive)):
+            if st.button("💬 " + _c["title"], key=f"openchat_{_ci}", use_container_width=True):
+                _old = st.session_state.archive.pop(_ci)
+                archive_current()
+                st.session_state.messages = _old["messages"]
+                st.rerun()
+
 _more = st.sidebar.expander("⚙️ More · ఇంకా")
+st.session_state.memory = _more.text_area(
+    "🧠 Memory · నీ గురించి గుర్తుంచుకునేవి (లేదా chat లో \"remember ...\" అని చెప్పండి)",
+    value=st.session_state.get("memory", ""), height=110)
 dark_mode = _more.toggle("Dark mode 🌙", value=False)
 _more.toggle("Super natural voice 🎙️ (Gemini, uses quota)", value=False, key="voice_pro")
 if dark_mode:
@@ -430,17 +462,22 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         )
         for m in recent
     ]
-    def make_chat(use_search):
-        cfg = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+    def make_chat(use_search, use_url=False):
+        _tools = []
         if use_search:
-            # Live Google Search - so Veda AI can answer with today's info (gold rates, news, weather...)
-            cfg = types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-            )
+            _tools.append(types.Tool(google_search=types.GoogleSearch()))  # live info
+        if use_url:
+            _tools.append(types.Tool(url_context=types.UrlContext()))  # read links
+        cfg = types.GenerateContentConfig(system_instruction=_sys(), tools=_tools or None)
         return client.chats.create(model=MODEL, config=cfg, history=history)
 
-    chat = make_chat(live_search)
+    _all_urls = [u.rstrip(".,)") for u in re.findall(r"https?://\S+", user_text)]
+    _yt_urls = [u for u in _all_urls if "youtube.com" in u or "youtu.be" in u]
+    _web_urls = [u for u in _all_urls if u not in _yt_urls]
+    _m = re.match(r"\s*(remember|gurthu\s*pettuko|gurthupettuko)\b[:,\- ]*(.+)", user_text, flags=re.I | re.S)
+    if _m:
+        st.session_state.memory = ((st.session_state.get("memory") or "") + "\n- " + _m.group(2).strip()).strip()
+    chat = make_chat(live_search, bool(_web_urls))
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
     # If Google is busy (503), quietly retry a few times before showing an error
@@ -465,6 +502,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                             ))
                         except Exception:
                             msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type=attach_mime or "application/octet-stream"))
+                    for _yu in _yt_urls[:1]:
+                        msg_parts.append(types.Part(file_data=types.FileData(file_uri=_yu)))
                     msg_parts.append(types.Part.from_text(text=user_text))
 
                     def reply_stream():
@@ -508,7 +547,11 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                     )
                 except Exception:
                     pass
+            if _m:
+                st.caption("🧠 గుర్తుపెట్టుకున్నాను · Remembered")
             copy_button(full_reply)
+            if talk_mode:
+                play_voice(full_reply)
             if st.button("🔊 Read aloud", key=f"speak_live_{len(st.session_state.messages)}"):
                 st.session_state.speak_idx = len(st.session_state.messages) - 1
                 st.rerun()
