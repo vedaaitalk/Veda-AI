@@ -162,6 +162,7 @@ if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_con
 
 _more = st.sidebar.expander("⚙️ More · ఇంకా")
 dark_mode = _more.toggle("Dark mode 🌙", value=False)
+_more.toggle("Super natural voice 🎙️ (Gemini, uses quota)", value=False, key="voice_pro")
 if dark_mode:
     st.markdown("""
 <style>
@@ -261,12 +262,39 @@ def natural_voice(text):
     return asyncio.run(run())
 
 
+def gemini_voice(text):
+    """Most natural voice: Gemini TTS (uses a little free quota)."""
+    import io, wave
+    resp = client.models.generate_content(
+        model="gemini-3.8-flash-lite-tts",
+        contents=[{"role": "user", "parts": [{"text": text}]}],
+        config={
+            "response_modalities": ["AUDIO"],
+            "speech_config": {"voice_config": {"voice": "Kore"}},
+        },
+    )
+    data = resp.candidates[0].content.parts[0].inline_data.data
+    if data[:4] == b"RIFF":
+        return data
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:  # raw PCM -> WAV
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(data)
+    return buf.getvalue()
+
+
 def play_voice(text):
     spoken = clean_for_speech(text)
     if not spoken:
         return
     try:
         with st.spinner("వాయిస్ సిద్ధమవుతోంది... · Preparing voice..."):
+            if st.session_state.get("voice_pro"):
+                try:
+                    st.audio(gemini_voice(spoken), format="audio/wav", autoplay=True)
+                    return
+                except Exception as ge:
+                    st.caption(f"Super voice busy, using normal natural voice. ({str(ge)[:90]})")
             audio = natural_voice(spoken)
         if not audio:
             raise RuntimeError("empty audio")
