@@ -396,6 +396,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             full_reply = None
             last_err = None
             use_search = live_search
+            search_fell_back = False
             for attempt in range(5):
                 try:
                     msg_parts = []
@@ -429,6 +430,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                         if use_search:
                             # live-search free quota busy - answer normally this once, no crash
                             use_search = False
+                            search_fell_back = True
+                            search_err = msg[:160]
                             chat = make_chat(False)
                             continue
                         if attempt < 3:
@@ -438,6 +441,9 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             if full_reply is None:
                 raise last_err
             st.session_state.messages.append({"role": "model", "text": full_reply})
+            if search_fell_back:
+                st.caption("⚠️ Live search ఇప్పుడు busy (free quota) - ఈ answer live data లేకుండా వచ్చింది. 12:30 తర్వాత మళ్ళీ అడగండి · Live search quota busy, this answer has no live data. Ask again after 12:30.")
+                st.caption(f"Technical detail: {search_err}")
             if len(full_reply) > 500:  # only document-length replies get the PDF button
                 try:
                     st.download_button(
