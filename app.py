@@ -197,12 +197,8 @@ dark_mode = _more.toggle("Dark mode 🌙", value=False)
 VOICES = {
     "👩 Kore - మృదువైన ఆడ గొంతు (Soft female)": ("Kore", "F"),
     "👩 Aoede - ఉల్లాసమైన ఆడ గొంతు (Bright female)": ("Aoede", "F"),
-    "👩 Leda - యువ ఆడ గొంతు (Young female)": ("Leda", "F"),
-    "👩 Zephyr - తేలికైన ఆడ గొంతు (Light female)": ("Zephyr", "F"),
     "👨 Puck - ఉత్సాహ మగ గొంతు (Upbeat male)": ("Puck", "M"),
-    "👨 Charon - గంభీర మగ గొంతు (Deep male)": ("Charon", "M"),
     "👨 Fenrir - ఉత్తేజ మగ గొంతు (Energetic male)": ("Fenrir", "M"),
-    "👨 Orus - దృఢమైన మగ గొంతు (Firm male)": ("Orus", "M"),
 }
 _vchoice = _more.selectbox("🎙️ Voice · వాయిస్ ఎంచుకో", list(VOICES.keys()), key="voice_choice")
 VOICE_NAME, VOICE_GENDER = VOICES[_vchoice]
