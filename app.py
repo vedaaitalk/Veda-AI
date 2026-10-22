@@ -232,17 +232,25 @@ def copy_button(text):
 
 
 def generate_image(prompt_text):
-    """Draw an image with Gemini's image model (Nano Banana). Returns PNG bytes or None."""
-    for model_name in ("gemini-3.1-flash-image", "gemini-2.5-flash-image"):
+    """Draw an image with Gemini's image model (Nano Banana). Returns (PNG bytes or None, error text)."""
+    last_err = None
+    for model_name in (
+        "gemini-3.1-flash-image",
+        "gemini-3.1-flash-image-preview",
+        "gemini-2.5-flash-image",
+        "gemini-2.5-flash-image-preview",
+    ):
         try:
             resp = client.models.generate_content(model=model_name, contents=prompt_text)
             for cand in resp.candidates or []:
                 for part in cand.content.parts:
                     if getattr(part, "inline_data", None) is not None:
-                        return part.inline_data.data
-        except Exception:
+                        return part.inline_data.data, None
+            last_err = "no image in reply"
+        except Exception as e:
+            last_err = str(e)[:200]
             continue
-    return None
+    return None, last_err
 
 
 def transcribe_audio(audio_bytes, mime_type):
@@ -432,16 +440,18 @@ if prompt:
             st.markdown(img_prompt)
         with st.chat_message("assistant"):
             with st.spinner("గీస్తోంది... · Drawing..."):
-                img_bytes = generate_image(img_prompt)
+                img_bytes, img_err = generate_image(img_prompt)
             if img_bytes:
                 st.image(img_bytes)
                 st.download_button("💾 Image download", data=img_bytes, file_name="veda-ai-image.png", mime="image/png", key=f"img_{len(st.session_state.messages)}")
                 st.session_state.messages.append({"role": "model", "text": f"🎨 (image) {img_prompt}"})
             else:
                 st.error(
-                    "ఇప్పుడు చిత్రం గీయలేకపోయాను - image free limit అయిపోయి ఉండవచ్చు. కొద్దిసేపు ఆగి మళ్ళీ ప్రయత్నించండి.\n\n"
-                    "Couldn't draw right now - the image free limit may be used up. Wait a little and try again."
+                    "ఇప్పుడు చిత్రం గీయలేకపోయాను - image free limit అయిపోయి ఉండవచ్చు (ప్రతిరోజూ మధ్యాహ్నం 12:30 కి reset). కొద్దిసేపు ఆగి మళ్ళీ ప్రయత్నించండి.\n\n"
+                    "Couldn't draw right now - the image free limit may be used up (it resets around 12:30 PM every day). Wait a little and try again."
                 )
+                if img_err:
+                    st.caption(f"Technical detail: {img_err}")
     elif getattr(prompt, "files", None):
         up = prompt.files[0]
         reply_to(prompt.text or "", up.read(), getattr(up, "type", None) or "", getattr(up, "name", "file"))
