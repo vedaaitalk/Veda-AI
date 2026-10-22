@@ -330,6 +330,29 @@ def text_models():
         return []
 
 
+LIVE_WORDS = ("rate", "price", "today", "now", "news", "score", "weather", "latest", "live", "current", "ivala", "ivvala", "ippudu", "entha", "enti", "match", "result", "stock", "search", "temperature", "vaartha", "varthalu")
+
+
+def needs_live(text):
+    t = text.lower()
+    return len(t) < 200 and any(w in t for w in LIVE_WORDS)
+
+
+def web_context(query):
+    """Free internet search (no Google quota). Returns a text block for the AI, or ''."""
+    try:
+        from ddgs import DDGS
+        res = DDGS().text(query, max_results=5, region="in-en")
+    except Exception:
+        return ""
+    if not res:
+        return ""
+    lines = [f"- {r.get('title','')}: {r.get('body','')} ({r.get('href','')})" for r in res]
+    return ("[LIVE WEB SEARCH RESULTS fetched just now - use them to answer with current facts. "
+            "If they do not contain the exact answer, say so honestly and never invent numbers. "
+            "Mention the source site name.]\n" + "\n".join(lines) + "\n[END OF SEARCH RESULTS]\n\nUser question: ")
+
+
 def play_voice(text):
     spoken = clean_for_speech(text)
     if not spoken:
@@ -492,7 +515,11 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
     _m = re.match(r"\s*(remember|gurthu\s*pettuko|gurthupettuko)\b[:,\- ]*(.+)", user_text, flags=re.I | re.S)
     if _m:
         st.session_state.memory = ((st.session_state.get("memory") or "") + "\n- " + _m.group(2).strip()).strip()
-    chat = make_chat(live_search, bool(_web_urls))
+    _web_ctx = ""
+    if live_search and not attach_bytes and not _all_urls and needs_live(user_text):
+        with st.spinner("ఇంటర్నెట్ లో వెతుకుతోంది... · Searching the web..."):
+            _web_ctx = web_context(user_text)
+    chat = make_chat(False, bool(_web_urls))
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
     # If Google is busy (503), quietly retry a few times before showing an error
@@ -500,7 +527,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         try:
             full_reply = None
             last_err = None
-            use_search = live_search
+            use_search = False
             search_fell_back = False
             search_tried = False
             search_models = [m for m in text_models() if m != MODEL][:4]
@@ -522,7 +549,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                             msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type=attach_mime or "application/octet-stream"))
                     for _yu in _yt_urls[:1]:
                         msg_parts.append(types.Part(file_data=types.FileData(file_uri=_yu)))
-                    msg_parts.append(types.Part.from_text(text=user_text))
+                    msg_parts.append(types.Part.from_text(text=_web_ctx + user_text))
 
                     def reply_stream():
                         for chunk in chat.send_message_stream(msg_parts):
@@ -587,6 +614,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                     )
                 except Exception:
                     pass
+            if _web_ctx:
+                st.caption("🌐 Live web search ఉపయోగించాను · Used live web search")
             if _m:
                 st.caption("🧠 గుర్తుపెట్టుకున్నాను · Remembered")
             copy_button(full_reply)
