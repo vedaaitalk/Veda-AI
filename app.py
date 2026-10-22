@@ -118,6 +118,22 @@ st.markdown("""
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
+# Optional password lock - only active if APP_PASSWORD is set in Streamlit Secrets
+try:
+    _app_pw = st.secrets.get("APP_PASSWORD")
+except Exception:
+    _app_pw = None
+if _app_pw and not st.session_state.get("unlocked"):
+    st.info("🔒 Password ఇవ్వండి · Enter the password to use Veda AI")
+    _typed = st.text_input("Password", type="password")
+    if _typed:
+        if _typed == str(_app_pw):
+            st.session_state.unlocked = True
+            st.rerun()
+        else:
+            st.error("తప్పు password · Wrong password")
+    st.stop()
+
 # Mode picker in the sidebar
 mode = st.sidebar.radio("Mode ఎంచుకోండి · Pick a mode", list(MODES.keys()))
 SYSTEM_PROMPT = MODES[mode] + """
@@ -139,6 +155,18 @@ live_search = st.sidebar.toggle("Live internet 🌐 · Gold rate, news వంట
 image_mode = st.sidebar.toggle("చిత్రం గీయి 🎨 · Image mode (ON చేసి ఏం కావాలో type చేయండి)", value=False)
 
 # New chat button - clears the screen and starts fresh
+dark_mode = st.sidebar.toggle("Dark mode 🌙", value=False)
+if dark_mode:
+    st.markdown("""
+<style>
+.stApp, [data-testid="stHeader"] { background-color: #0e1117 !important; }
+[data-testid="stSidebar"] { background-color: #161a23 !important; }
+.stApp, .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3,
+[data-testid="stSidebar"] * , [data-testid="stCaptionContainer"] { color: #e8eaed !important; }
+[data-testid="stChatInput"] textarea { color: #e8eaed !important; }
+</style>
+""", unsafe_allow_html=True)
+
 if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_container_width=True):
     st.session_state.messages = []
     st.session_state.last_audio_hash = None
@@ -212,6 +240,7 @@ def copy_button(text):
     safe = json.dumps(text).replace("</", "<\\/")
     components.html(
         f"""<button id="cb" style="padding:3px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;">📋 Copy</button>
+        <button id="sb" style="padding:3px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;margin-left:6px;">🔊 Read aloud</button>
         <script>
         var t = {safe};
         function fb() {{
@@ -219,6 +248,19 @@ def copy_button(text):
             ta.value = t; document.body.appendChild(ta); ta.select();
             document.execCommand("copy"); document.body.removeChild(ta);
         }}
+        var speaking = false;
+        document.getElementById("sb").onclick = function() {{
+            var b = this;
+            var synth = window.parent.speechSynthesis;
+            if (speaking) {{ synth.cancel(); speaking = false; b.innerText = "🔊 Read aloud"; return; }}
+            synth.cancel();
+            var plain = t.replace(/<[^>]*>/g, " ");
+            var u = new SpeechSynthesisUtterance(plain);
+            u.lang = /[\u0C00-\u0C7F]/.test(plain) ? "te-IN" : "en-IN";
+            u.onend = function() {{ speaking = false; b.innerText = "🔊 Read aloud"; }};
+            speaking = true; b.innerText = "⏹ Stop";
+            synth.speak(u);
+        }};
         document.getElementById("cb").onclick = function() {{
             var btn = this;
             var done = function() {{ btn.innerText = "Copied ✅"; }};
@@ -312,6 +354,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         "image": attach_bytes if is_image else None,
         "pdf": attach_bytes if attach_mime == "application/pdf" else None,
         "file_name": attach_name if (attach_bytes and not is_image) else None,
+        "mime": attach_mime,
     })
     with st.chat_message("user"):
         if attach_bytes and is_image:
@@ -417,7 +460,23 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             )
 
 
+# 💡 Suggestion chips on an empty chat
+if not st.session_state.messages:
+    st.caption("ఇవి try చేయండి · Try one of these 👇")
+    _chips = [
+        ("💰 Gold rate", "today gold rate entha?"),
+        ("😂 Joke", "oka manchi Telugu joke cheppu"),
+        ("📰 News", "ivala top news enti?"),
+        ("💼 Resume tips", "DevOps resume ela improve cheyyali?"),
+    ]
+    _cols = st.columns(2)
+    for _n, (_label, _q) in enumerate(_chips):
+        if _cols[_n % 2].button(_label, key=f"chip_{_n}", use_container_width=True):
+            st.session_state.pending = {"text": _q}
+            st.rerun()
+
 # Show the conversation so far as chat bubbles
+_last_user_idx = max([j for j, m in enumerate(st.session_state.messages) if m["role"] == "user"], default=-1)
 for i, msg in enumerate(st.session_state.messages):
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         if msg.get("image"):
@@ -430,8 +489,28 @@ for i, msg in enumerate(st.session_state.messages):
         if msg["role"] == "model":
             shown = re.sub(r"<script.*?</script>", "", msg["text"], flags=re.S | re.I)
             st.markdown(shown, unsafe_allow_html=True)
+        elif st.session_state.get("edit_idx") == i:
+            new_text = st.text_area("✏️ Edit message", value=msg["text"], key=f"edit_text_{i}")
+            ec1, ec2 = st.columns(2)
+            if ec1.button("Send ➤", key=f"edit_send_{i}", use_container_width=True) and new_text.strip():
+                st.session_state.pending = {
+                    "text": new_text.strip(),
+                    "bytes": msg.get("image") or msg.get("pdf"),
+                    "mime": msg.get("mime"),
+                    "name": msg.get("file_name"),
+                }
+                st.session_state.messages = st.session_state.messages[:i]
+                st.session_state.edit_idx = None
+                st.rerun()
+            if ec2.button("Cancel", key=f"edit_cancel_{i}", use_container_width=True):
+                st.session_state.edit_idx = None
+                st.rerun()
         else:
             st.markdown(msg["text"])
+            if i == _last_user_idx and not msg["text"].startswith("🎨 "):
+                if st.button("✏️ Edit", key=f"edit_{i}"):
+                    st.session_state.edit_idx = i
+                    st.rerun()
         if msg["role"] == "model" and len(msg["text"]) > 500:  # documents only
             try:
                 st.download_button(
@@ -445,6 +524,18 @@ for i, msg in enumerate(st.session_state.messages):
                 pass
         if msg["role"] == "model" and not msg["text"].startswith("🎨 "):
             copy_button(msg["text"])
+            if i == len(st.session_state.messages) - 1 and i >= 1:
+                if st.button("🔄 Regenerate", key=f"regen_{i}"):
+                    prev = st.session_state.messages[i - 1]
+                    if prev["role"] == "user" and not prev["text"].startswith("🎨 "):
+                        st.session_state.pending = {
+                            "text": prev["text"],
+                            "bytes": prev.get("image") or prev.get("pdf"),
+                            "mime": prev.get("mime"),
+                            "name": prev.get("file_name"),
+                        }
+                        st.session_state.messages = st.session_state.messages[:i - 1]
+                        st.rerun()
 
 # 🎙️ Mic + typing + files in one box - the mic sits right next to the send button
 prompt = st.chat_input(
@@ -496,3 +587,9 @@ if prompt:
                 )
     elif getattr(prompt, "text", None):
         reply_to(prompt.text)
+
+
+# Run a queued request (suggestion chip / regenerate / edited message)
+_pending = st.session_state.pop("pending", None)
+if _pending:
+    reply_to(_pending["text"], _pending.get("bytes"), _pending.get("mime"), _pending.get("name"))
