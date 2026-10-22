@@ -504,7 +504,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             search_fell_back = False
             search_tried = False
             search_models = [m for m in text_models() if m != MODEL][:4]
-            for attempt in range(5):
+            chat_models = [m for m in text_models() if m != MODEL]
+            for attempt in range(12):
                 try:
                     msg_parts = []
                     if attach_bytes and is_image:
@@ -558,9 +559,16 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                             search_err = msg[:160]
                             chat = make_chat(False)
                             continue
+                        if chat_models:
+                            # this model's free quota is empty - switch to another model your key can use
+                            chat = make_chat(False, False, chat_models.pop(0))
+                            continue
                         if attempt < 3:
                             time.sleep(5)
                             continue
+                    if ("404" in msg or "NOT_FOUND" in msg) and chat_models:
+                        chat = make_chat(False, False, chat_models.pop(0))
+                        continue
                     raise
             if full_reply is None:
                 raise last_err
