@@ -132,6 +132,9 @@ When the user asks for formatting (centered text, colors, bold), use simple HTML
 # Voice replies on/off (browser reads the reply aloud)
 speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు 🔊 · Read replies aloud", value=False)
 
+# Live internet search on/off - ON for gold rates/news, OFF for fastest chat
+live_search = st.sidebar.toggle("Live internet 🌐 · Gold rate, news వంటివి అడిగితే ON పెట్టండి", value=True)
+
 api_key = get_api_key()
 if not api_key:
     st.error(
@@ -213,12 +216,14 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         st.markdown(user_text)
 
     # Build a Gemini chat with the full history so it remembers the conversation
+    # only the recent conversation goes to the AI - keeps replies fast and saves free quota
+    recent = st.session_state.messages[:-1][-16:]
     history = [
         types.Content(
             role=m["role"],
             parts=[types.Part.from_text(text=("📷 " if m.get("image") else ("📎 " if m.get("file_name") else "")) + m["text"])],
         )
-        for m in st.session_state.messages[:-1]  # everything before this message
+        for m in recent
     ]
     def make_chat(use_search):
         cfg = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
@@ -230,7 +235,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             )
         return client.chats.create(model=MODEL, config=cfg, history=history)
 
-    chat = make_chat(True)
+    chat = make_chat(live_search)
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
     # If Google is busy (503), quietly retry a few times before showing an error
@@ -238,7 +243,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         try:
             full_reply = None
             last_err = None
-            use_search = True
+            use_search = live_search
             for attempt in range(5):
                 try:
                     msg_parts = []
