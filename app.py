@@ -231,6 +231,17 @@ def copy_button(text):
     )
 
 
+def wants_image(text):
+    """Does this message ask for a drawing/photo? Then route to the image maker automatically."""
+    t = text.lower()
+    kws = [
+        "image", "photo", "picture", "draw", "paint", "sketch", "poster", "logo",
+        "wallpaper", "meme", "chitram", "chitra", "bomma", "bOMMa",
+        "gii", "geyi", "geyandi", "geyali", "geyava",
+    ]
+    return any(k in t for k in kws)
+
+
 def generate_image(prompt_text):
     """Draw an image with a Gemini image model (Nano Banana). Returns (PNG bytes or None, error text).
     Asks the API key which image models it can actually use, then tries them."""
@@ -443,7 +454,7 @@ prompt = st.chat_input(
     file_type=["jpg", "jpeg", "png", "webp", "gif", "pdf", "txt", "md", "csv", "json", "py"],
 )
 if prompt:
-    if image_mode and getattr(prompt, "text", None) and not getattr(prompt, "files", None) and getattr(prompt, "audio", None) is None:
+    if (image_mode or wants_image(getattr(prompt, "text", "") or "")) and getattr(prompt, "text", None) and not getattr(prompt, "files", None) and getattr(prompt, "audio", None) is None:
         img_prompt = prompt.text
         st.session_state.messages.append({"role": "user", "text": "🎨 " + img_prompt})
         with st.chat_message("user"):
