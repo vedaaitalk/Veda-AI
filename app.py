@@ -354,6 +354,23 @@ def needs_live(text):
 
 def web_context(query):
     """Free internet search (no Google quota). Returns a text block for the AI, or ''."""
+    ql = query.lower()
+    if any(w in ql for w in ("news", "vaartha", "varthalu", "headline", "breaking")):
+        try:
+            from ddgs import DDGS
+            _q = re.sub(r"\b(ivala|ivalati|ivvala|ippudu|enti|entha|em|emi|vaartha|varthalu|cheppu|chupinchu|kavali|ki|ni|top)\b|[?!.]", " ", ql)
+            _q = re.sub(r"\s+", " ", _q).strip()
+            if _q in ("", "news", "latest news", "today news", "news today"):
+                _q = "top news today India Andhra Pradesh Telangana"
+            elif "india" not in _q:
+                _q += " India"
+            nres = DDGS().news(_q, max_results=8, region="in-en")
+        except Exception:
+            nres = []
+        if nres:
+            nl = [f"- {r.get('title','')} ({r.get('source','')}, {r.get('date','')}): {r.get('body','')} ({r.get('url','')})" for r in nres]
+            return ("[LIVE NEWS HEADLINES fetched just now - summarize the top stories as a short list with the source name. "
+                    "Use only these; prefer the newest dates and say if they look old; never invent news.]\n" + "\n".join(nl) + "\n[END OF NEWS]\n\nUser question: ")
     try:
         from ddgs import DDGS
         res = DDGS().text(query, max_results=5, region="in-en")
