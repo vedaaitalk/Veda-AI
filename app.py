@@ -344,7 +344,7 @@ def text_models():
         return []
 
 
-LIVE_WORDS = ("rate", "price", "today", "now", "news", "score", "weather", "latest", "live", "current", "ivala", "ivvala", "ippudu", "entha", "enti", "match", "result", "stock", "search", "temperature", "vaartha", "varthalu")
+LIVE_WORDS = ("rate", "price", "today", "now", "news", "score", "weather", "latest", "live", "current", "ivala", "ivvala", "ippudu", "entha", "enti", "match", "result", "stock", "search", "temperature", "vaartha", "varthalu", " vs ", " v ", "t20", "odi", "ipl", "cricket", "innings", "wicket", "overs", "jarugutunda", "jarugutundi", "gelichindi", "gelichaaru", "evaru gelicharu", "scorecard", "fixture", "schedule", "winner", "standings", "points table", "trending", "release", "box office")
 
 
 def needs_live(text):
@@ -371,6 +371,8 @@ def web_context(query):
             nl = [f"- {r.get('title','')} ({r.get('source','')}, {r.get('date','')}): {r.get('body','')} ({r.get('url','')})" for r in nres]
             return ("[LIVE NEWS HEADLINES fetched just now - summarize the top stories as a short list with the source name. "
                     "Use only these; prefer the newest dates and say if they look old; never invent news.]\n" + "\n".join(nl) + "\n[END OF NEWS]\n\nUser question: ")
+    if re.search(r"\bvs\b|\bt20|\bodi\b|\bipl\b|cricket|score|match", ql) and "score" not in ql:
+        query = query + " live score"
     try:
         from ddgs import DDGS
         res = DDGS().text(query, max_results=5, region="in-en")
