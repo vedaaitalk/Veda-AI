@@ -194,6 +194,18 @@ st.session_state.memory = _more.text_area(
     "🧠 Memory · నీ గురించి గుర్తుంచుకునేవి (లేదా chat లో \"remember ...\" అని చెప్పండి)",
     value=st.session_state.get("memory", ""), height=110)
 dark_mode = _more.toggle("Dark mode 🌙", value=False)
+VOICES = {
+    "👩 Kore - మృదువైన ఆడ గొంతు (Soft female)": ("Kore", "F"),
+    "👩 Aoede - ఉల్లాసమైన ఆడ గొంతు (Bright female)": ("Aoede", "F"),
+    "👩 Leda - యువ ఆడ గొంతు (Young female)": ("Leda", "F"),
+    "👩 Zephyr - తేలికైన ఆడ గొంతు (Light female)": ("Zephyr", "F"),
+    "👨 Puck - ఉత్సాహ మగ గొంతు (Upbeat male)": ("Puck", "M"),
+    "👨 Charon - గంభీర మగ గొంతు (Deep male)": ("Charon", "M"),
+    "👨 Fenrir - ఉత్తేజ మగ గొంతు (Energetic male)": ("Fenrir", "M"),
+    "👨 Orus - దృఢమైన మగ గొంతు (Firm male)": ("Orus", "M"),
+}
+_vchoice = _more.selectbox("🎙️ Voice · వాయిస్ ఎంచుకో", list(VOICES.keys()), key="voice_choice")
+VOICE_NAME, VOICE_GENDER = VOICES[_vchoice]
 if dark_mode:
     st.markdown("""
 <style>
@@ -277,11 +289,12 @@ def clean_for_speech(text):
 
 
 @st.cache_data(show_spinner=False)
-def natural_voice(text):
+def natural_voice(text, gender="F"):
     """Natural neural voice (free). Telugu script -> Telugu voice, otherwise Indian-English voice."""
     import asyncio
     import edge_tts
-    voice = "te-IN-ShrutiNeural" if re.search(r"[\u0C00-\u0C7F]", text) else "en-IN-NeerjaNeural"
+    te = bool(re.search(r"[\u0C00-\u0C7F]", text))
+    voice = {("F", True): "te-IN-ShrutiNeural", ("M", True): "te-IN-MohanNeural", ("F", False): "en-IN-NeerjaNeural", ("M", False): "en-IN-PrabhatNeural"}[(gender, te)]
 
     async def run():
         data = b""
@@ -293,7 +306,8 @@ def natural_voice(text):
     return asyncio.run(run())
 
 
-def gemini_voice(text):
+@st.cache_data(show_spinner=False)
+def gemini_voice(text, voice_name="Kore"):
     """Most natural voice: Gemini TTS (uses a little free quota)."""
     import io, wave
     resp = client.models.generate_content(
@@ -301,7 +315,7 @@ def gemini_voice(text):
         contents=[{"role": "user", "parts": [{"text": text}]}],
         config={
             "response_modalities": ["AUDIO"],
-            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}},
+            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": voice_name}}},
         },
     )
     data = resp.candidates[0].content.parts[0].inline_data.data
@@ -374,11 +388,11 @@ def play_voice(text):
         with st.spinner("వాయిస్ సిద్ధమవుతోంది... · Preparing voice..."):
             if True:  # super natural voice is the default
                 try:
-                    st.audio(gemini_voice(spoken), format="audio/wav", autoplay=True)
+                    st.audio(gemini_voice(spoken, VOICE_NAME), format="audio/wav", autoplay=True)
                     return
                 except Exception as ge:
                     pass  # quietly use the free natural voice
-            audio = natural_voice(spoken)
+            audio = natural_voice(spoken, VOICE_GENDER)
         if not audio:
             raise RuntimeError("empty audio")
         st.audio(audio, format="audio/mp3", autoplay=True)
