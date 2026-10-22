@@ -146,16 +146,22 @@ Keep the original structure and wording; only change what they asked for.
 When the user asks for formatting (centered text, colors, bold), use simple HTML like <div align="center">, <span style="color:#00BFFF">, <b> - the chat and PDF both render it. Never use <script>."""
 
 # Voice replies on/off (browser reads the reply aloud)
-speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు 🔊 · Read replies aloud", value=False)
+speak_replies = False  # each reply has its own 🔊 button now
 
 # Live internet search on/off - ON for gold rates/news, OFF for fastest chat
-live_search = st.sidebar.toggle("Live internet 🌐 · Gold rate, news వంటివి అడిగితే ON పెట్టండి", value=True)
+live_search = st.sidebar.toggle("Live internet 🌐", value=True)
 
 # Image mode - turn ON, type what you want drawn, send
-image_mode = st.sidebar.toggle("చిత్రం గీయి 🎨 · Image mode (ON చేసి ఏం కావాలో type చేయండి)", value=False)
+image_mode = False  # images are detected automatically from your message
 
 # New chat button - clears the screen and starts fresh
-dark_mode = st.sidebar.toggle("Dark mode 🌙", value=False)
+if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_container_width=True):
+    st.session_state.messages = []
+    st.session_state.last_audio_hash = None
+    st.rerun()
+
+_more = st.sidebar.expander("⚙️ More · ఇంకా")
+dark_mode = _more.toggle("Dark mode 🌙", value=False)
 if dark_mode:
     st.markdown("""
 <style>
@@ -167,11 +173,6 @@ if dark_mode:
 </style>
 """, unsafe_allow_html=True)
 
-if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_container_width=True):
-    st.session_state.messages = []
-    st.session_state.last_audio_hash = None
-    st.rerun()
-
 # Save the current chat to a file / restore an old one
 if "restored_chat_hash" not in st.session_state:
     st.session_state.restored_chat_hash = None
@@ -180,13 +181,13 @@ if st.session_state.get("messages"):
         {"role": m["role"], "text": m["text"], "file_name": m.get("file_name")}
         for m in st.session_state.messages
     ]
-    st.sidebar.download_button(
+    _more.download_button(
         "💾 Chat save · Download చాట్",
         data=json.dumps(save_data, ensure_ascii=False, indent=2),
         file_name="veda-ai-chat.json",
         mime="application/json",
     )
-up_chat = st.sidebar.file_uploader("📂 పాత చాట్ తెరవండి · Restore saved chat", type=["json"])
+up_chat = _more.file_uploader("📂 పాత చాట్ తెరవండి · Restore saved chat", type=["json"])
 if up_chat is not None:
     up_hash = hashlib.md5(up_chat.getvalue()).hexdigest()
     if up_hash != st.session_state.restored_chat_hash:
@@ -200,7 +201,7 @@ if up_chat is not None:
                 st.session_state.restored_chat_hash = up_hash
                 st.rerun()
         except Exception:
-            st.sidebar.error("ఆ file సరిగ్గా లేదు · That file is not a saved chat")
+            _more.error("ఆ file సరిగ్గా లేదు · That file is not a saved chat")
 
 api_key = get_api_key()
 if not api_key:
