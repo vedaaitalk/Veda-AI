@@ -135,6 +135,45 @@ speak_replies = st.sidebar.toggle("Replies గట్టిగా చదువు
 # Live internet search on/off - ON for gold rates/news, OFF for fastest chat
 live_search = st.sidebar.toggle("Live internet 🌐 · Gold rate, news వంటివి అడిగితే ON పెట్టండి", value=True)
 
+# Image mode - turn ON, type what you want drawn, send
+image_mode = st.sidebar.toggle("చిత్రం గీయి 🎨 · Image mode (ON చేసి ఏం కావాలో type చేయండి)", value=False)
+
+# New chat button - clears the screen and starts fresh
+if st.sidebar.button("🗑️ New chat · కొత్త చాట్", use_container_width=True):
+    st.session_state.messages = []
+    st.session_state.last_audio_hash = None
+    st.rerun()
+
+# Save the current chat to a file / restore an old one
+if "restored_chat_hash" not in st.session_state:
+    st.session_state.restored_chat_hash = None
+if st.session_state.get("messages"):
+    save_data = [
+        {"role": m["role"], "text": m["text"], "file_name": m.get("file_name")}
+        for m in st.session_state.messages
+    ]
+    st.sidebar.download_button(
+        "💾 Chat save · Download చాట్",
+        data=json.dumps(save_data, ensure_ascii=False, indent=2),
+        file_name="veda-ai-chat.json",
+        mime="application/json",
+    )
+up_chat = st.sidebar.file_uploader("📂 పాత చాట్ తెరవండి · Restore saved chat", type=["json"])
+if up_chat is not None:
+    up_hash = hashlib.md5(up_chat.getvalue()).hexdigest()
+    if up_hash != st.session_state.restored_chat_hash:
+        try:
+            data = json.loads(up_chat.getvalue().decode("utf-8"))
+            if isinstance(data, list):
+                st.session_state.messages = [
+                    {"role": d.get("role", "user"), "text": d.get("text", ""), "file_name": d.get("file_name")}
+                    for d in data
+                ]
+                st.session_state.restored_chat_hash = up_hash
+                st.rerun()
+        except Exception:
+            st.sidebar.error("ఆ file సరిగ్గా లేదు · That file is not a saved chat")
+
 api_key = get_api_key()
 if not api_key:
     st.error(
@@ -166,6 +205,44 @@ def speak_text(text):
         </script>""",
         height=0,
     )
+
+
+def copy_button(text):
+    """Small Copy button under a reply - copies the text to the clipboard."""
+    safe = json.dumps(text).replace("</", "<\\/")
+    components.html(
+        f"""<button id="cb" style="padding:3px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;">📋 Copy</button>
+        <script>
+        var t = {safe};
+        function fb() {{
+            var ta = document.createElement("textarea");
+            ta.value = t; document.body.appendChild(ta); ta.select();
+            document.execCommand("copy"); document.body.removeChild(ta);
+        }}
+        document.getElementById("cb").onclick = function() {{
+            var btn = this;
+            var done = function() {{ btn.innerText = "Copied ✅"; }};
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(t).then(done).catch(function() {{ fb(); done(); }});
+            }} else {{ fb(); done(); }}
+        }};
+        </script>""",
+        height=36,
+    )
+
+
+def generate_image(prompt_text):
+    """Draw an image with Gemini's image model (Nano Banana). Returns PNG bytes or None."""
+    for model_name in ("gemini-3.1-flash-image", "gemini-2.5-flash-image"):
+        try:
+            resp = client.models.generate_content(model=model_name, contents=prompt_text)
+            for cand in resp.candidates or []:
+                for part in cand.content.parts:
+                    if getattr(part, "inline_data", None) is not None:
+                        return part.inline_data.data
+        except Exception:
+            continue
+    return None
 
 
 def transcribe_audio(audio_bytes, mime_type):
@@ -299,6 +376,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                     )
                 except Exception:
                     pass
+            copy_button(full_reply)
             if speak_replies:
                 speak_text(full_reply)
         except Exception as e:
@@ -336,6 +414,8 @@ for i, msg in enumerate(st.session_state.messages):
                 )
             except Exception:
                 pass
+        if msg["role"] == "model" and not msg["text"].startswith("🎨 "):
+            copy_button(msg["text"])
 
 # 🎙️ Mic + typing + files in one box - the mic sits right next to the send button
 prompt = st.chat_input(
@@ -345,7 +425,24 @@ prompt = st.chat_input(
     file_type=["jpg", "jpeg", "png", "webp", "gif", "pdf", "txt", "md", "csv", "json", "py"],
 )
 if prompt:
-    if getattr(prompt, "files", None):
+    if image_mode and getattr(prompt, "text", None) and not getattr(prompt, "files", None) and getattr(prompt, "audio", None) is None:
+        img_prompt = prompt.text
+        st.session_state.messages.append({"role": "user", "text": "🎨 " + img_prompt})
+        with st.chat_message("user"):
+            st.markdown(img_prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("గీస్తోంది... · Drawing..."):
+                img_bytes = generate_image(img_prompt)
+            if img_bytes:
+                st.image(img_bytes)
+                st.download_button("💾 Image download", data=img_bytes, file_name="veda-ai-image.png", mime="image/png", key=f"img_{len(st.session_state.messages)}")
+                st.session_state.messages.append({"role": "model", "text": f"🎨 (image) {img_prompt}"})
+            else:
+                st.error(
+                    "ఇప్పుడు చిత్రం గీయలేకపోయాను - image free limit అయిపోయి ఉండవచ్చు. కొద్దిసేపు ఆగి మళ్ళీ ప్రయత్నించండి.\n\n"
+                    "Couldn't draw right now - the image free limit may be used up. Wait a little and try again."
+                )
+    elif getattr(prompt, "files", None):
         up = prompt.files[0]
         reply_to(prompt.text or "", up.read(), getattr(up, "type", None) or "", getattr(up, "name", "file"))
     elif getattr(prompt, "audio", None) is not None:
