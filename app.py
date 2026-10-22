@@ -373,11 +373,15 @@ def web_context(query):
                     "Use only these; prefer the newest dates and say if they look old; never invent news.]\n" + "\n".join(nl) + "\n[END OF NEWS]\n\nUser question: ")
     if re.search(r"\bvs\b|\bt20|\bodi\b|\bipl\b|cricket|score|match", ql) and "score" not in ql:
         query = query + " live score"
-    try:
-        from ddgs import DDGS
-        res = DDGS().text(query, max_results=5, region="in-en")
-    except Exception:
-        return ""
+    res = []
+    from ddgs import DDGS
+    for _be in ("auto", "bing", "yahoo", "brave", "duckduckgo"):
+        try:
+            res = DDGS().text(query, max_results=5, region="in-en", backend=_be)
+        except Exception:
+            res = []
+        if res:
+            break
     if not res:
         return ""
     lines = [f"- {r.get('title','')}: {r.get('body','')} ({r.get('href','')})" for r in res]
@@ -563,9 +567,11 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
     if _m:
         st.session_state.memory = ((st.session_state.get("memory") or "") + "\n- " + _m.group(2).strip()).strip()
     _web_ctx = ""
+    _live_failed = False
     if live_search and not attach_bytes and not _all_urls and needs_live(user_text):
         with st.spinner("ఇంటర్నెట్ లో వెతుకుతోంది... · Searching the web..."):
             _web_ctx = web_context(user_text)
+        _live_failed = not _web_ctx
     chat = make_chat(False, bool(_web_urls))
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
@@ -663,6 +669,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                     pass
             if _web_ctx:
                 st.caption("🌐 Live web search ఉపయోగించాను · Used live web search")
+            elif _live_failed:
+                st.caption("⚠️ Live search ఇప్పుడు దొరకలేదు, నా పాత జ్ఞానంతో చెప్పాను (నమ్మొద్దు) · Live search failed, answered from old knowledge (don't trust for live facts)")
             if _m:
                 st.caption("🧠 గుర్తుపెట్టుకున్నాను · Remembered")
             copy_button(full_reply)
