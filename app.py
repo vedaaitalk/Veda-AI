@@ -203,15 +203,17 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         )
         for m in st.session_state.messages[:-1]  # everything before this message
     ]
-    chat = client.chats.create(
-        model=MODEL,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+    def make_chat(use_search):
+        cfg = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+        if use_search:
             # Live Google Search - so Veda AI can answer with today's info (gold rates, news, weather...)
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        ),
-        history=history,
-    )
+            cfg = types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            )
+        return client.chats.create(model=MODEL, config=cfg, history=history)
+
+    chat = make_chat(True)
 
     # Get Veda AI's reply - streamed word by word like ChatGPT
     # If Google is busy (503), quietly retry a few times before showing an error
@@ -219,7 +221,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         try:
             full_reply = None
             last_err = None
-            for attempt in range(4):
+            use_search = True
+            for attempt in range(5):
                 try:
                     msg_parts = []
                     if attach_bytes and is_image:
@@ -244,9 +247,19 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                     break
                 except Exception as e:
                     last_err = e
-                    if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 3:
+                    msg = str(e)
+                    if ("503" in msg or "UNAVAILABLE" in msg) and attempt < 3:
                         time.sleep(3 * (attempt + 1))
                         continue
+                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                        if use_search:
+                            # live-search free quota busy - answer normally this once, no crash
+                            use_search = False
+                            chat = make_chat(False)
+                            continue
+                        if attempt < 3:
+                            time.sleep(5)
+                            continue
                     raise
             if full_reply is None:
                 raise last_err
@@ -268,8 +281,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             st.error(
                 "ఏదో తప్పు జరిగింది / Something went wrong:\n\n"
                 f"`{e}`\n\n"
-                "ఫ్రీ లిమిట్ అయిపోయి ఉండవచ్చు, కొద్దిసేపు ఆగి మళ్ళీ ప్రయత్నించండి.\n\n"
-                "You may have hit the free limit - wait a little and try again."
+                "ఫ్రీ లిమిట్ అయిపోయి ఉండవచ్చు - ప్రతిరోజూ మధ్యాహ్నం 12:30 కి reset అవుతుంది, అప్పుడు మళ్ళీ ప్రయత్నించండి.\n\n"
+                "You may have hit the free limit - it resets every day around 12:30 PM, try again after that."
             )
 
 
