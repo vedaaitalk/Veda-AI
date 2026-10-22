@@ -98,6 +98,17 @@ def make_pdf(text):
 
 
 st.set_page_config(page_title="Veda AI", page_icon="🤖")
+
+# WhatsApp-style layout: my messages on the RIGHT, Veda AI on the LEFT
+st.markdown("""
+<style>
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+    flex-direction: row-reverse;
+    text-align: right;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
