@@ -462,14 +462,14 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
         )
         for m in recent
     ]
-    def make_chat(use_search, use_url=False):
+    def make_chat(use_search, use_url=False, model=None):
         _tools = []
         if use_search:
             _tools.append(types.Tool(google_search=types.GoogleSearch()))  # live info
         if use_url:
             _tools.append(types.Tool(url_context=types.UrlContext()))  # read links
         cfg = types.GenerateContentConfig(system_instruction=_sys(), tools=_tools or None)
-        return client.chats.create(model=MODEL, config=cfg, history=history)
+        return client.chats.create(model=model or MODEL, config=cfg, history=history)
 
     _all_urls = [u.rstrip(".,)") for u in re.findall(r"https?://\S+", user_text)]
     _yt_urls = [u for u in _all_urls if "youtube.com" in u or "youtu.be" in u]
@@ -487,6 +487,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             last_err = None
             use_search = live_search
             search_fell_back = False
+            search_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
             for attempt in range(5):
                 try:
                     msg_parts = []
@@ -519,8 +520,13 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                         time.sleep(3 * (attempt + 1))
                         continue
                     if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                        if use_search and search_models:
+                            # search quota busy on this model - try another model for live search
+                            _alt = search_models.pop(0)
+                            chat = make_chat(True, bool(_web_urls), _alt)
+                            continue
                         if use_search:
-                            # live-search free quota busy - answer normally this once, no crash
+                            # live-search free quota busy everywhere - answer normally this once, no crash
                             use_search = False
                             search_fell_back = True
                             search_err = msg[:160]
