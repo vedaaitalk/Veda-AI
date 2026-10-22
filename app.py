@@ -348,6 +348,20 @@ def web_context(query):
     if not res:
         return ""
     lines = [f"- {r.get('title','')}: {r.get('body','')} ({r.get('href','')})" for r in res]
+    # also read the top pages, so exact numbers (rates, scores) are included
+    import urllib.request
+    for r in res[:3]:
+        try:
+            req = urllib.request.Request(r.get("href", ""), headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=6).read(400000).decode("utf-8", errors="ignore")
+            html = re.sub(r"<(script|style|noscript)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
+            txt = re.sub(r"<[^>]+>", " ", html)
+            txt = re.sub(r"\s+", " ", txt)
+            keys = [m.start() for m in re.finditer(r"₹|Rs\.?|\b\d{1,3}/\d{1,3}\b|\d+ runs|overs|per gram|22K|24K", txt)]
+            start = max(0, (keys[0] - 300) if keys else 0)
+            lines.append(f"PAGE TEXT from {r.get('href','')}: {txt[start:start+2200]}")
+        except Exception:
+            continue
     return ("[LIVE WEB SEARCH RESULTS fetched just now - use them to answer with current facts. "
             "If they do not contain the exact answer, say so honestly and never invent numbers. "
             "Mention the source site name.]\n" + "\n".join(lines) + "\n[END OF SEARCH RESULTS]\n\nUser question: ")
