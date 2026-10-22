@@ -315,6 +315,21 @@ def gemini_voice(text):
     return buf.getvalue()
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def text_models():
+    """Ask Google which text models this key can use (newest flash first)."""
+    try:
+        names = []
+        for m in client.models.list():
+            n = m.name.replace("models/", "")
+            acts = getattr(m, "supported_actions", None) or []
+            if "flash" in n and "generateContent" in acts and not any(x in n for x in ("image", "tts", "audio", "live", "embedding", "robotics", "computer", "thinking")):
+                names.append(n)
+        return sorted(set(names), reverse=True)
+    except Exception:
+        return []
+
+
 def play_voice(text):
     spoken = clean_for_speech(text)
     if not spoken:
@@ -487,7 +502,8 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             last_err = None
             use_search = live_search
             search_fell_back = False
-            search_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+            search_tried = False
+            search_models = [m for m in text_models() if m != MODEL][:4]
             for attempt in range(5):
                 try:
                     msg_parts = []
@@ -516,6 +532,15 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                 except Exception as e:
                     last_err = e
                     msg = str(e)
+                    if use_search and search_tried and ("404" in msg or "NOT_FOUND" in msg) and search_models:
+                        chat = make_chat(True, bool(_web_urls), search_models.pop(0))
+                        continue
+                    if use_search and search_tried and ("404" in msg or "NOT_FOUND" in msg):
+                        use_search = False
+                        search_fell_back = True
+                        search_err = msg[:160]
+                        chat = make_chat(False)
+                        continue
                     if ("503" in msg or "UNAVAILABLE" in msg) and attempt < 3:
                         time.sleep(3 * (attempt + 1))
                         continue
@@ -523,6 +548,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                         if use_search and search_models:
                             # search quota busy on this model - try another model for live search
                             _alt = search_models.pop(0)
+                            search_tried = True
                             chat = make_chat(True, bool(_web_urls), _alt)
                             continue
                         if use_search:
