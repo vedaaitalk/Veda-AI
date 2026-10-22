@@ -75,7 +75,6 @@ def load_font_paths():
 
 def make_pdf(text):
     """Turn a reply into a downloadable PDF (Telugu + English, colors/bold/center)."""
-    import re
     from fpdf import FPDF
     clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", text)
     clean = re.sub(r"<script.*?</script>", "", clean, flags=re.S | re.I)
@@ -206,7 +205,11 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
     ]
     chat = client.chats.create(
         model=MODEL,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            # Live Google Search - so Veda AI can answer with today's info (gold rates, news, weather...)
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+        ),
         history=history,
     )
 
@@ -297,7 +300,7 @@ for i, msg in enumerate(st.session_state.messages):
             except Exception:
                 pass
 
-# 🎙️ Mic + typing in one box - the mic sits right next to the send button
+# 🎙️ Mic + typing + files in one box - the mic sits right next to the send button
 prompt = st.chat_input(
     "Veda AI తో మాట్లాడండి... · Talk to Veda AI...",
     accept_audio=True,
