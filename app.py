@@ -195,30 +195,12 @@ if st.session_state.get("archive"):
                 st.rerun()
 
 _more = st.sidebar.expander("⚙️ More · ఇంకా")
-st.session_state.memory = _more.text_area(
-    "🧠 Memory · నీ గురించి గుర్తుంచుకునేవి (లేదా chat లో \"remember ...\" అని చెప్పండి)",
-    value=st.session_state.get("memory", ""), height=110)
-dark_mode = _more.toggle("Dark mode 🌙", value=False)
-VOICES = {
-    "👩 Kore - మృదువైన ఆడ గొంతు (Soft female)": ("Kore", "F"),
-    "👩 Aoede - ఉల్లాసమైన ఆడ గొంతు (Bright female)": ("Aoede", "F"),
-    "👨 Puck - ఉత్సాహ మగ గొంతు (Upbeat male)": ("Puck", "M"),
-    "👨 Fenrir - ఉత్తేజ మగ గొంతు (Energetic male)": ("Fenrir", "M"),
-}
-_vchoice = _more.selectbox("🎙️ Voice · వాయిస్ ఎంచుకో", list(VOICES.keys()), key="voice_choice")
-VOICE_NAME, VOICE_GENDER = VOICES[_vchoice]
-if dark_mode:
-    st.markdown("""
-<style>
-.stApp, [data-testid="stHeader"] { background-color: #0e1117 !important; }
-[data-testid="stSidebar"] { background-color: #161a23 !important; }
-.stApp, .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3,
-[data-testid="stSidebar"] * , [data-testid="stCaptionContainer"] { color: #e8eaed !important; }
-[data-testid="stChatInput"] textarea { color: #e8eaed !important; }
-</style>
-""", unsafe_allow_html=True)
 
-# Save the current chat to a file / restore an old one
+def _group(title):
+    _more.markdown(f"**{title}**")
+
+# ---------- 💬 Chat ----------
+_group("💬 Chat · చాట్")
 if "restored_chat_hash" not in st.session_state:
     st.session_state.restored_chat_hash = None
 if st.session_state.get("messages"):
@@ -231,8 +213,9 @@ if st.session_state.get("messages"):
         data=json.dumps(save_data, ensure_ascii=False, indent=2),
         file_name="veda-ai-chat.json",
         mime="application/json",
+        use_container_width=True,
     )
-up_chat = _more.file_uploader("📂 పాత చాట్ తెరవండి · Restore saved chat", type=["json"])
+up_chat = _more.file_uploader("📂 పాత చాట్ తెరవండి · Restore saved chat", type=["json"], key="restore_chat_file")
 if up_chat is not None:
     up_hash = hashlib.md5(up_chat.getvalue()).hexdigest()
     if up_hash != st.session_state.restored_chat_hash:
@@ -247,6 +230,38 @@ if up_chat is not None:
                 st.rerun()
         except Exception:
             _more.error("ఆ file సరిగ్గా లేదు · That file is not a saved chat")
+_more.divider()
+
+# ---------- 🧠 Personalize ----------
+_group("🧠 Personalize · నీ ఇష్టం")
+st.session_state.memory = _more.text_area(
+    "Memory · గుర్తుంచుకునేవి",
+    value=st.session_state.get("memory", ""), height=100, key="memory_box",
+    help="నీ గురించి గుర్తుంచుకునేవి. లేదా chat లో \"remember ...\" అని చెప్పండి · Or say \"remember ...\" in chat")
+VOICES = {
+    "👩 Kore - మృదువైన ఆడ గొంతు (Soft female)": ("Kore", "F"),
+    "👩 Aoede - ఉల్లాసమైన ఆడ గొంతు (Bright female)": ("Aoede", "F"),
+    "👨 Puck - ఉత్సాహ మగ గొంతు (Upbeat male)": ("Puck", "M"),
+    "👨 Fenrir - ఉత్తేజ మగ గొంతు (Energetic male)": ("Fenrir", "M"),
+}
+_vchoice = _more.selectbox("🎙️ Voice · వాయిస్", list(VOICES.keys()), key="voice_choice")
+VOICE_NAME, VOICE_GENDER = VOICES[_vchoice]
+_more.divider()
+
+# ---------- 🎨 Display ----------
+_group("🎨 Display · రూపం")
+dark_mode = _more.toggle("Dark mode 🌙", value=False, key="dark_mode_toggle")
+
+if dark_mode:
+    st.markdown("""
+<style>
+.stApp, [data-testid="stHeader"] { background-color: #0e1117 !important; }
+[data-testid="stSidebar"] { background-color: #161a23 !important; }
+.stApp, .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3,
+[data-testid="stSidebar"] * , [data-testid="stCaptionContainer"] { color: #e8eaed !important; }
+[data-testid="stChatInput"] textarea { color: #e8eaed !important; }
+</style>
+""", unsafe_allow_html=True)
 
 api_key = get_api_key()
 if not api_key:
