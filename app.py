@@ -1,3 +1,4 @@
+# v58 - dated gold rates and direct cricket snapshots, no paid API
 # ============================================
 # Veda AI - your own ChatGPT-style chat app
 # Built with Streamlit + Google Gemini (free)
@@ -393,12 +394,370 @@ def text_models():
         return []
 
 
+# ---------- v58: free, source-checked gold and cricket snapshots ----------
+# These helpers use only Python's standard library. No API key or card needed.
+from datetime import datetime, timezone, timedelta
+from html import unescape
+from html.parser import HTMLParser
+from urllib.parse import urlparse, urljoin
+from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+_GOLD_HOME = "https://www.goodreturns.in/gold-rates/"
+_GROWW_HOME = "https://groww.in/gold-rates"
+_CRICKET_RSS = "https://static.cricinfo.com/rss/livescores.xml"
+_CRICKET_HOME = "https://www.cricbuzz.com/cricket-match/live-scores"
+
+
+def _now_ist():
+    return datetime.now(_IST)
+
+
+def _tidy(text):
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+class _PublicPage(HTMLParser):
+    """Keep readable text, heading/title and whole score-card anchors."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.text, self.heading, self.title, self.anchors = [], [], [], []
+        self.hidden = 0
+        self.in_title = self.in_heading = False
+        self.anchor = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in ("script", "style", "noscript"):
+            self.hidden += 1
+        if self.hidden:
+            return
+        self.text.append(" ")
+        if tag == "title":
+            self.in_title = True
+        if tag == "h1":
+            self.in_heading = True
+        if tag == "a":
+            self.anchor = {"url": a.get("href", ""), "title": a.get("title", ""), "parts": []}
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "noscript"):
+            self.hidden = max(0, self.hidden - 1)
+            return
+        if self.hidden:
+            return
+        self.text.append(" ")
+        if tag == "title":
+            self.in_title = False
+        if tag == "h1":
+            self.in_heading = False
+        if tag == "a" and self.anchor:
+            self.anchor["text"] = _tidy(" ".join(self.anchor.pop("parts")))
+            self.anchors.append(self.anchor)
+            self.anchor = None
+
+    def handle_data(self, data):
+        if self.hidden:
+            return
+        self.text.append(data)
+        if self.in_title:
+            self.title.append(data)
+        if self.in_heading:
+            self.heading.append(data)
+        if self.anchor is not None:
+            self.anchor["parts"].append(data)
+
+
+def _parse_public(html):
+    page = _PublicPage()
+    page.feed(html)
+    return page
+
+
+@st.cache_data(show_spinner=False, ttl=60, max_entries=64)
+def _public_get(url):
+    # Fixed public providers only: never fetch private/local addresses from search.
+    allowed = {"www.goodreturns.in", "goodreturns.in", "groww.in",
+               "static.cricinfo.com", "www.cricbuzz.com", "m.cricbuzz.com"}
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in allowed:
+        raise ValueError("Unsupported public source")
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xml;q=0.9,*/*;q=0.8"})
+    with urlopen(req, timeout=9) as response:
+        if urlparse(response.url).hostname not in allowed:
+            raise ValueError("Unexpected redirect")
+        data = response.read(2_500_001)
+        if len(data) > 2_500_000:
+            raise ValueError("Page too large")
+        html = data.decode("utf-8", errors="replace")
+    return html, _now_ist().isoformat()
+
+
+_CITY_ALIASES = {
+    "rajahmundry": ("rajahmundry", "rajamahendravaram", "రాజమండ్రి"),
+    "vijayawada": ("vijayawada", "bezawada", "విజయవాడ"),
+    "hyderabad": ("hyderabad", "hyd", "హైదరాబాద్"),
+    "visakhapatnam": ("visakhapatnam", "vizag", "విశాఖ"),
+    "guntur": ("guntur", "గుంటూరు"), "kakinada": ("kakinada", "కాకినాడ"),
+    "tirupati": ("tirupati", "తిరుపతి"), "nellore": ("nellore", "నెల్లూరు"),
+    "chennai": ("chennai", "madras"), "bangalore": ("bangalore", "bengaluru"),
+    "mumbai": ("mumbai", "bombay"), "delhi": ("new delhi", "delhi"),
+    "kolkata": ("kolkata", "calcutta"), "pune": ("pune",),
+    "kerala": ("kerala",), "coimbatore": ("coimbatore",), "madurai": ("madurai",),
+    "ahmedabad": ("ahmedabad",), "lucknow": ("lucknow",), "jaipur": ("jaipur",),
+    "amaravati": ("amaravati",), "ongole": ("ongole",), "warangal": ("warangal",),
+}
+
+
+def _has_word(text, word):
+    return bool(re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text, re.I))
+
+
+def live_kind(query):
+    q = query.lower()
+    # Let ordinary explanations and historical questions keep the existing AI path.
+    if re.search(r"\b(history|historical|yesterday|tomorrow|forecast|predict|last year|rules|explain|meaning|difference|why|how to)\b|నిన్న", q):
+        return ""
+    if re.search(r"\b(?:19|20)\d{2}\b", q) and str(_now_ist().year) not in q:
+        return ""
+    if re.search(r"gold|bangaram|bangaaram|బంగారం|బంగారు", q) and re.search(r"rate|price|cost|today|live|entha|ధర|రేటు|ఎంత", q):
+        return "gold"
+    score = re.search(r"score|స్కోర్|స్కోరు", q)
+    cricket = re.search(r"cricket|క్రికెట్|\bipl\b|\bt20\b|\bodi\b|\btest match\b", q)
+    versus = re.search(r"\bvs\.?\b|\bversus\b", q)
+    if (score and not re.search(r"football|soccer|tennis|kabaddi|exam|credit|cibil|basketball", q)) or (cricket and re.search(r"live|today|now|match|result|score|ippudu|ఈరోజు|లైవ్", q)) or (versus and re.search(r"live|score|cricket", q)):
+        return "cricket"
+    return ""
+
+
+def _gold_record(html, location):
+    page = _parse_public(html)
+    title = _tidy(" ".join(page.title))
+    heading = _tidy(" ".join(page.heading))
+    text = _tidy(" ".join(page.text))
+    expected = location.replace("-", " ")
+    if expected.lower() not in heading.lower():
+        raise ValueError("Gold location not confirmed")
+    # Date must belong to the title/heading, not a footer or an unrelated article.
+    date_text = title + " " + heading
+    dm = re.search(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b", date_text)
+    if not dm:
+        raise ValueError("Gold date missing")
+    day = None
+    for fmt in ("%d %B %Y", "%d %b %Y"):
+        try:
+            day = datetime.strptime(dm.group(0), fmt).date()
+            break
+        except ValueError:
+            pass
+    if day is None or day > _now_ist().date():
+        raise ValueError("Invalid gold date")
+    # Anchor on the main rate sentence, not the site's market ticker/navigation.
+    m = re.search(r"Today's gold price in\s+(.+?)\s+stands at\s+₹\s*([\d,.]+)\s+per gram for 24\s+karat gold.{0,90}?₹\s*([\d,.]+)\s+per gram for 22\s+karat gold", text, re.I)
+    if not m or expected.lower() != m.group(1).lower().strip():
+        raise ValueError("Gold rate sentence changed")
+    p24, p22 = (float(m.group(i).replace(",", "")) for i in (2, 3))
+    if not (0 < p22 < p24 and .85 < p22 / p24 < .98):
+        raise ValueError("Gold units/purity failed validation")
+    return {"date": day, "24": p24, "22": p22, "location": m.group(1)}
+
+
+def gold_answer(query):
+    q = query.lower()
+    if any(_has_word(q, x) for x in ("dubai", "uae", "usa", "uk", "singapore", "saudi", "qatar")):
+        return "Ee direct gold feature India INR rates kosam. Country/city rate ikkada verify cheyyalekapoyanu. · This direct gold feature covers India only; I could not verify that country's rate."
+    city = next((c for c, names in _CITY_ALIASES.items() if any(_has_word(q, n) for n in names)), "")
+    location = city or "India"
+    urls = [(_GOLD_HOME + city + ".html" if city else _GOLD_HOME),
+            (_GROWW_HOME + "/gold-rate-today-in-" + city if city else _GROWW_HOME)]
+    old = None
+    for url in urls:
+        try:
+            html, checked = _public_get(url)
+            record = _gold_record(html, location)
+            record.update(url=url, checked=checked)
+            if record["date"] == _now_ist().date():
+                old = record
+                break
+            if old is None or record["date"] > old["date"]:
+                old = record
+        except Exception:
+            continue
+    if old is None:
+        return ("Gold rate ippudu verify kaaledu. Number guess cheyyanu. · Could not verify the gold rate now; I won't guess.\n\n"
+                f"Direct source: {urls[0]}\n\nCity peru tho malli adugu, e.g. Hyderabad gold rate. · Try again with a city name.")
+    r = old
+    today = r["date"] == _now_ist().date()
+    date_label = r["date"].strftime("%d %b %Y")
+    checked = datetime.fromisoformat(r["checked"]).strftime("%d %b %Y, %I:%M %p IST")
+    lines = [f"### Gold rate · బంగారం ధర ({r['location']})",
+             f"Source date: {date_label}" + (" · Today's published rate" if today else " · OLD RATE, not verified for today"),
+             "", "| Purity | 1 gram | 10 grams |", "|---|---:|---:|",
+             f"| 22K | ₹{r['22']:,.2f} | ₹{r['22'] * 10:,.2f} |",
+             f"| 24K | ₹{r['24']:,.2f} | ₹{r['24'] * 10:,.2f} |", "",
+             "Ivi indicative rates matrame. GST, making charges/other levies extra; shop rate marachu. · Indicative rates, not a jeweller quote. These are daily published rates, not a live exchange tick.",
+             f"Source: {r['url']}", f"Fetched: {checked} (cache up to 60 seconds)."]
+    if not city:
+        lines.append("City specify cheyyaledu kabatti India indicative rate chupisthunna. Mee city vere ayithe peru cheppu. · India rate shown, not a confirmed local city quote.")
+    return "\n\n".join(lines[:2]) + "\n\n" + "\n".join(lines[2:])
+
+
+_TEAM_ALIASES = {
+    "india": ("india", "ind", "భారత్", "ఇండియా"),
+    "new zealand": ("new zealand", "nz", "న్యూజిలాండ్"),
+    "australia": ("australia", "aus"), "england": ("england", "eng"),
+    "pakistan": ("pakistan", "pak"), "sri lanka": ("sri lanka", "sl"),
+    "south africa": ("south africa", "sa", "rsa"), "bangladesh": ("bangladesh", "ban"),
+    "afghanistan": ("afghanistan", "afg"), "zimbabwe": ("zimbabwe", "zim"),
+    "west indies": ("west indies", "wi"), "ireland": ("ireland", "ire"),
+    "chennai super kings": ("chennai super kings", "csk"),
+    "mumbai indians": ("mumbai indians", "mi"),
+    "royal challengers bengaluru": ("royal challengers bengaluru", "royal challengers bangalore", "rcb"),
+    "sunrisers hyderabad": ("sunrisers hyderabad", "srh"),
+    "kolkata knight riders": ("kolkata knight riders", "kkr"),
+    "delhi capitals": ("delhi capitals", "dc"), "rajasthan royals": ("rajasthan royals", "rr"),
+    "punjab kings": ("punjab kings", "pbks"), "gujarat titans": ("gujarat titans", "gt"),
+    "lucknow super giants": ("lucknow super giants", "lsg"),
+}
+
+
+def _cricket_rss(xml, checked):
+    if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
+        raise ValueError("Unexpected XML")
+    channel = ET.fromstring(xml).find("channel")
+    if channel is None:
+        raise ValueError("No score feed")
+    stamp = parsedate_to_datetime(channel.findtext("pubDate", ""))
+    if stamp.tzinfo is None:
+        raise ValueError("Score feed timezone missing")
+    age = (_now_ist() - stamp.astimezone(_IST)).total_seconds()
+    if not -300 <= age <= 900:
+        raise ValueError("Score feed older than 15 minutes")
+    rows = []
+    for item in channel.findall("item"):
+        title = _tidy(item.findtext("title", ""))
+        url = item.findtext("link", "").strip()
+        if not title or urlparse(url).hostname not in ("www.cricinfo.com", "www.espncricinfo.com"):
+            continue
+        rows.append({"title": title, "text": title, "url": url,
+                     "source": "ESPNcricinfo RSS", "published": stamp.astimezone(_IST).strftime("%d %b %Y, %I:%M %p IST"), "checked": checked})
+    return rows
+
+
+def _cricbuzz_cards(html, checked):
+    page = _parse_public(html)
+    rows, seen = [], set()
+    for a in page.anchors:
+        href, text, title = a["url"], a["text"], _tidy(a["title"])
+        # Full score-card links have a title and scores; the navigation ticker doesn't.
+        if not re.match(r"/(live-cricket-stream|live-cricket-scores)/\d+/", href) or not title or not re.search(r"\d+[-/]\d+|\(\d+(?:\.\d+)?\)|\bwon by\b|\bopt to\b", text):
+            continue
+        match_id = re.search(r"/([0-9]+)/", href).group(1)
+        if match_id in seen:
+            continue
+        seen.add(match_id)
+        rows.append({"title": title, "text": text[:1000], "url": urljoin(_CRICKET_HOME, href),
+                     "source": "Cricbuzz", "published": "not exposed by this page (freshness unverified)", "checked": checked})
+    return rows
+
+
+def _select_cricket(rows, query):
+    q = query.lower()
+    teams = [team for team, aliases in _TEAM_ALIASES.items() if any(_has_word(q, a) for a in aliases)]
+    women = bool(re.search(r"women|woman|womens|మహిళ", q))
+    junior = bool(re.search(r"u[- ]?19|under[- ]?19", q))
+    match_format = re.search(r"\b(t20i?|odi|test)\b", q)
+    ordinal = re.search(r"\b(\d+(?:st|nd|rd|th))\b", q)
+    chosen = []
+    for row in rows:
+        title = row["title"].lower()
+        details = title + " " + row.get("text", "").lower()
+        if match_format and not re.search(r"\b" + match_format.group(1).rstrip("i") + r"i?\b", details):
+            continue
+        if ordinal and not _has_word(details, ordinal.group(1)):
+            continue
+        if teams:
+            if bool(re.search(r"\bwomen\b", title)) != women:
+                continue
+            if bool(re.search(r"\bu[- ]?19\b|under[- ]?19", title)) != junior:
+                continue
+            parts = re.split(r"\s+(?:v|vs\.?)\s+", title)
+            names = [re.sub(r"\s+\d.*$", "", p).strip(" *,") for p in parts]
+            if not all(any(n == team or n.startswith(team + " women") or n.startswith(team + " u19") or n.startswith(team + " under-19") or n.startswith(team + ",") for n in names) for team in teams):
+                continue
+        elif women and "women" not in title:
+            continue
+        chosen.append(row)
+    return chosen, bool(teams)
+
+
+def cricket_answer(query):
+    rows = []
+    try:
+        xml, checked = _public_get(_CRICKET_RSS)
+        rows = _cricket_rss(xml, checked)
+    except Exception:
+        pass
+    selected, named = _select_cricket(rows, query)
+    # Use the score page if the feed is unavailable or doesn't cover the requested team.
+    if not selected:
+        try:
+            html, checked = _public_get(_CRICKET_HOME)
+            rows = _cricbuzz_cards(html, checked)
+            selected, named = _select_cricket(rows, query)
+        except Exception:
+            pass
+    if not selected and named:
+        try:
+            html, checked = _public_get(_CRICKET_HOME + "/recent-matches")
+            rows = _cricbuzz_cards(html, checked)
+            selected, named = _select_cricket(rows, query)
+            for row in selected:
+                row["source"] += " recent results (not necessarily today)"
+        except Exception:
+            pass
+    if not selected:
+        return ("Aa match score ippudu verify cheyyalekapoyanu. Match ledani kaadu; naa sources lo confirm kaaledu. · I couldn't verify that match, not proof there is no match.\n\n"
+                f"Direct score page: {_CRICKET_HOME}\n\nRendu team names tho adugu, e.g. IND vs NZ live score. · Ask with both team names.")
+    # Unrecognised specific teams must not silently get a random match's score.
+    if not named:
+        prefix = ("Team match automatic ga confirm kaaledu. Source lo unna konni score snapshots ivi; mee match select cheyyi. · Some source snapshots below, not necessarily your requested match.\n\n")
+    else:
+        prefix = "Source snapshot · మూలంలో కనిపించిన స్కోరు\n\n"
+    if selected and "recent results" in selected[0]["source"]:
+        prefix = "Live match confirm kaaledu; ivi RECENT RESULTS matrame, live kaadu. · No live match verified; these are recent completed results, not live scores.\n\n"
+    lines = [prefix]
+    for row in selected[:5]:
+        safe_title = row["title"].replace("*", "\\*")
+        lines.extend([f"**{safe_title}**", row["text"] if row["text"] != row["title"] else "",
+                      f"Source: {row['source']} · {row['url']}", f"Feed/page updated: {row['published']}",
+                      f"Fetched: {datetime.fromisoformat(row['checked']).strftime('%d %b %Y, %I:%M %p IST')}", ""])
+    lines.append("Idi snapshot matrame; automatic ball-by-ball refresh kaadu. Feed lo completed/upcoming matches kuda undochu. RSS lo overs/result lekapothe add cheyyanu; * mark match in progress ani guarantee kaadu. · Scores can lag. Ask again for a new check (cache up to 60 seconds). Feed timestamp is not the time of each ball.")
+    if len(selected) > 5:
+        lines.append(f"Source has {len(selected)} matching entries; showing 5. Rendu team names cheppu. · Name both teams to narrow it down.")
+    return "\n\n".join(x for x in lines if x)
+
+
+def direct_live_answer(query):
+    kind = live_kind(query)
+    if not kind:
+        return None
+    if not live_search:
+        return "Live internet OFF lo undi. Sidebar lo Live internet ON chesi malli adugu. · Turn on Live internet in the sidebar and ask again; I won't guess a current rate or score."
+    try:
+        return gold_answer(query) if kind == "gold" else cricket_answer(query)
+    except Exception:
+        return "Live source ippudu verify kaaledu. Malli try cheyyi. · Could not verify the live source right now; no number guessed."
+
+
 LIVE_WORDS = ("rate", "price", "today", "now", "news", "score", "weather", "latest", "live", "current", "ivala", "ivvala", "ippudu", "entha", "enti", "match", "result", "stock", "search", "temperature", "vaartha", "varthalu", " vs ", " v ", "t20", "odi", "ipl", "cricket", "innings", "wicket", "overs", "jarugutunda", "jarugutundi", "gelichindi", "gelichaaru", "evaru gelicharu", "scorecard", "fixture", "schedule", "winner", "standings", "points table", "trending", "release", "box office")
 
 
 def needs_live(text):
     t = text.lower()
-    return len(t) < 200 and any(w in t for w in LIVE_WORDS)
+    return bool(live_kind(text)) or any(w in t for w in LIVE_WORDS)
 
 
 def web_context(query):
@@ -422,6 +781,10 @@ def web_context(query):
                     "Use only these; prefer the newest dates and say if they look old; never invent news.]\n" + "\n".join(nl) + "\n[END OF NEWS]\n\nUser question: ")
     if re.search(r"\bvs\b|\bt20|\bodi\b|\bipl\b|cricket|score|match", ql) and "score" not in ql:
         query = query + " live score"
+    from datetime import datetime
+    query = re.sub(r"\b(ivala|ivvala|ippudu|entha|enti|cheppu|chupinchu|kavali)\b", " ", query, flags=re.I)
+    query = re.sub(r"\s+", " ", query).strip()
+    query += " " + _now_ist().strftime("%d %B %Y")
     res = []
     from ddgs import DDGS
     for _be in ("auto", "bing", "yahoo", "brave", "duckduckgo"):
@@ -590,6 +953,22 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             st.caption(f"📎 {attach_name}")
         st.markdown(user_text)
 
+    # Exact gold/score snapshots bypass AI rewriting, so quota errors cannot change numbers.
+    if not attach_bytes and not re.search(r"https?://", user_text):
+        with st.spinner("Live source check chesthunna... · Checking live source..."):
+            direct_reply = direct_live_answer(user_text)
+        if direct_reply is not None:
+            with st.chat_message("assistant"):
+                st.markdown(direct_reply)
+                st.session_state.messages.append({"role": "model", "text": direct_reply})
+                copy_button(direct_reply)
+                if talk_mode:
+                    play_voice(direct_reply)
+                if st.button("🔊 Read aloud", key=f"speak_live_{len(st.session_state.messages)}"):
+                    st.session_state.speak_idx = len(st.session_state.messages) - 1
+                    st.rerun()
+            return
+
     # Build a Gemini chat with the full history so it remembers the conversation
     # only the recent conversation goes to the AI - keeps replies fast and saves free quota
     recent = st.session_state.messages[:-1][-16:]
@@ -619,7 +998,10 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
     _live_failed = False
     if live_search and not attach_bytes and not _all_urls and needs_live(user_text):
         with st.spinner("ఇంటర్నెట్ లో వెతుకుతోంది... · Searching the web..."):
-            _web_ctx = web_context(user_text)
+            try:
+                _web_ctx = web_context(user_text)
+            except Exception:
+                _web_ctx = ""
         _live_failed = not _web_ctx
     chat = make_chat(False, bool(_web_urls))
 
@@ -651,7 +1033,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
                             msg_parts.append(types.Part.from_bytes(data=attach_bytes, mime_type=attach_mime or "application/octet-stream"))
                     for _yu in _yt_urls[:1]:
                         msg_parts.append(types.Part(file_data=types.FileData(file_uri=_yu)))
-                    msg_parts.append(types.Part.from_text(text=_web_ctx + user_text))
+                    msg_parts.append(types.Part.from_text(text=_web_ctx + ("[Current data could not be fetched. Do not answer current rates, scores or news from memory. Say the live check failed.]\n" if _live_failed else "") + user_text))
 
                     def reply_stream():
                         for chunk in chat.send_message_stream(msg_parts):
@@ -719,7 +1101,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             if _web_ctx:
                 st.caption("🌐 Live web search ఉపయోగించాను · Used live web search")
             elif _live_failed:
-                st.caption("⚠️ Live search ఇప్పుడు దొరకలేదు, నా పాత జ్ఞానంతో చెప్పాను (నమ్మొద్దు) · Live search failed, answered from old knowledge (don't trust for live facts)")
+                st.caption("⚠️ Live source verify kaaledu. Current numbers guess cheyyakudadhu. · Live check failed; current numbers are not verified.")
             if _m:
                 st.caption("🧠 గుర్తుపెట్టుకున్నాను · Remembered")
             copy_button(full_reply)
