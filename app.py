@@ -1,4 +1,4 @@
-# v59 - adds dated silver and petrol/diesel snapshots; free public sources only
+# v60 - adds no-key current weather and today forecast; preserves v59 rates/cricket
 # ============================================
 # Veda AI - your own ChatGPT-style chat app
 # Built with Streamlit + Google Gemini (free)
@@ -517,6 +517,8 @@ def _has_word(text, word):
 
 def live_kind(query):
     q = query.lower()
+    if _weather_intent(query):
+        return "weather"
     # Let ordinary explanations and historical questions keep the existing AI path.
     if re.search(r"\b(history|historical|yesterday|tomorrow|forecast|predict|last year|rules|explain|meaning|difference|why|how to)\b|నిన్న", q):
         return ""
@@ -953,14 +955,195 @@ def cricket_answer(query):
     return "\n\n".join(x for x in lines if x)
 
 
+
+# ---------- v60: no-key current weather + today's local forecast ----------
+# Open-Meteo Free API: NON-COMMERCIAL use only, subject to provider limits.
+# Attribution: https://open-meteo.com/ (weather), https://www.geonames.org/ (places).
+from urllib.parse import urlencode
+import math
+
+_WEATHER_GEO = "https://geocoding-api.open-meteo.com/v1/search"
+_WEATHER_API = "https://api.open-meteo.com/v1/forecast"
+_WEATHER_TERMS = (r"\b(?:weather|temperature|temp|humidity|wind|rain|raining|rainfall|forecast|"
+                  r"varsham|varshalu|vaana|vana|vaatavarana\w*|vatavarana\w*|vaathavarana\w*|vathavarana\w*|ushnograta|"
+                  r"endalu|chali)\b|వాతావరణ\S*|ఉష్ణోగ్రత\S*|వర్ష\S*|వాన\S*|తేమ|గాలి")
+_WEATHER_ALIASES = {
+    "రాజమండ్రి": "Rajahmundry", "రాజమహేంద్రవరం": "Rajahmundry",
+    "హైదరాబాద్": "Hyderabad", "హైదరాబాదు": "Hyderabad", "hyd": "Hyderabad",
+    "విజయవాడ": "Vijayawada", "bezawada": "Vijayawada",
+    "విశాఖపట్నం": "Visakhapatnam", "విశాఖ": "Visakhapatnam", "vizag": "Visakhapatnam",
+    "గుంటూరు": "Guntur", "కాకినాడ": "Kakinada", "తిరుపతి": "Tirupati",
+    "నెల్లూరు": "Nellore", "చెన్నై": "Chennai", "బెంగళూరు": "Bengaluru",
+    "బెంగుళూరు": "Bengaluru", "ముంబై": "Mumbai", "ఢిల్లీ": "Delhi",
+    "కొల్కతా": "Kolkata", "లండన్": "London", "దుబాయ్": "Dubai",
+    "న్యూయార్క్": "New York", "పారిస్": "Paris", "టోక్యో": "Tokyo",
+}
+
+
+def _weather_intent(query):
+    q = query.lower()
+    if re.search(r"\b(?:gold|silver|petrol|diesel|cricket|stock|bitcoin|score|news)\b|బంగారం|వెండి|పెట్రోల్|డీజిల్|క్రికెట్", q):
+        return False
+    # Keep definitions, comparisons and coding questions on the ordinary AI path.
+    if re.search(r"\b(?:explain|meaning|definition|difference|history|how to|code|python|api)\b|అంటే|ఎందుకు", q):
+        return False
+    if re.search(r"\bwhat (?:is|does) (?:the )?(?:weather|temperature|humidity|wind|rain)\??$", q):
+        return False
+    return bool(re.search(_WEATHER_TERMS, q))
+
+
+def _weather_place(query):
+    q = query.lower().strip()
+    q = re.sub(r"\b(?:what|how|where)['’]s\b", " ", q)
+    # Normalize common attached Telugu/Tenglish location suffixes before cleanup.
+    for city, aliases in _CITY_ALIASES.items():
+        for alias in aliases:
+            q = re.sub(r"(?<!\w)" + re.escape(alias) + r"(?:lo|లో)(?!\w)", city, q)
+    q = re.sub(r"లో(?=\s|[?!.,]|$)", " ", q)
+    q = re.sub(_WEATHER_TERMS, " ", q)
+    filler = (r"\b(?:what|what's|whats|is|are|the|a|an|in|at|of|for|please|tell|me|show|give|"
+              r"today|todays|today's|current|currently|live|now|right|conditions|condition|"
+              r"chance|chances|probability|percent|percentage|will|it|be|there|does|do|"
+              r"how|much|hot|cold|degrees|celsius|and|with|about|like|speed|direction|update|updates|report|"
+              r"ivala|ivvala|ee|roju|eroju|eeroju|ippudu|enti|entha|ela|undhi|undi|undha|"
+              r"untunda|untundha|untundi|untundhi|padutunda|paduthunda|padutundha|paduthundha|"
+              r"padutundi|paduthundi|pade|padey|vastunda|vasthunda|cheppu|cheppava|chupinchu|kavali|ga|lo|ki|naa|maa|"
+              r"daggara|ikkada|here|my|area|city|location|ra|bro)\b")
+    q = re.sub(filler, " ", q)
+    for word in ("ఈరోజు", "ఈ రోజు", "నేడు", "ఇప్పుడు", "ఎలా", "ఉంది", "ఉందా", "ఎంత", "చెప్పు", "చూపించు",
+                 "పడుతుందా", "పడుతుందో", "వచ్చే", "కురుస్తుందా", "అవకాశం", "శాతం", "మా", "ఇక్కడ", "నగరంలో", "నగరం", "తో"):
+        q = q.replace(word, " ")
+    q = re.sub(r"[^\w\s,.'\-\u0c00-\u0c7f]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip(" ,.'-_")
+    for alias, name in _WEATHER_ALIASES.items():
+        q = re.sub(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", name, q, flags=re.I)
+    # Only a genuinely absent place defaults. An unknown city must never become Rajahmundry.
+    return q or "Rajahmundry", not bool(q)
+
+
+@st.cache_data(show_spinner=False, ttl=300, max_entries=128)
+def _weather_json(url):
+    allowed = {"geocoding-api.open-meteo.com", "api.open-meteo.com"}
+    if urlparse(url).scheme != "https" or urlparse(url).hostname not in allowed:
+        raise ValueError("Unsupported weather source")
+    req = Request(url, headers={"User-Agent": "Veda-AI-Weather/60", "Accept": "application/json"})
+    with urlopen(req, timeout=12) as response:
+        if urlparse(response.url).scheme != "https" or urlparse(response.url).hostname not in allowed:
+            raise ValueError("Unexpected weather redirect")
+        raw = response.read(600001)
+        if len(raw) > 600000:
+            raise ValueError("Weather response too large")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict) or data.get("error"):
+        raise ValueError("Weather provider error")
+    return data, _now_ist().isoformat()
+
+
+def _weather_condition(code):
+    return {
+        0: "Clear sky / ఆకాశం నిర్మలం", 1: "Mainly clear / ఎక్కువగా నిర్మలం",
+        2: "Partly cloudy / పాక్షికంగా మేఘాలు", 3: "Overcast / మేఘావృతం",
+        45: "Fog / పొగమంచు", 48: "Rime fog / గడ్డకట్టే పొగమంచు",
+        51: "Light drizzle / తేలికపాటి జల్లు", 53: "Moderate drizzle / మోస్తరు జల్లు",
+        55: "Dense drizzle / దట్టమైన జల్లు", 56: "Light freezing drizzle", 57: "Dense freezing drizzle",
+        61: "Slight rain / తేలికపాటి వర్షం", 63: "Moderate rain / మోస్తరు వర్షం",
+        65: "Heavy rain / భారీ వర్షం", 66: "Light freezing rain", 67: "Heavy freezing rain",
+        71: "Slight snow / తేలికపాటి మంచు", 73: "Moderate snow", 75: "Heavy snow",
+        77: "Snow grains", 80: "Slight rain showers", 81: "Moderate rain showers",
+        82: "Violent rain showers", 85: "Slight snow showers", 86: "Heavy snow showers",
+        95: "Thunderstorm / ఉరుములతో వర్షం", 96: "Thunderstorm with slight hail",
+        99: "Thunderstorm with heavy hail",
+    }.get(code, "Condition unavailable / పరిస్థితి అందుబాటులో లేదు")
+
+
+def _weather_number(value, unit, low, high):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
+        return "Unavailable / అందుబాటులో లేదు"
+    return f"{value:g}{unit}"
+
+
+def weather_answer(query):
+    # This feature deliberately promises only now + today, never a guessed historical/future forecast.
+    if re.search(r"\b(?:tomorrow|yesterday|next|yesterdays|repu|ninna|week|month|historical)\b|రేపు|నిన్న|వచ్చే\s*(?:వారం|నెల)|\b\d{4}[-/]\d|\b\d{1,2}[-/]\d{1,2}\b|\b(?:19|20)\d{2}\b", query, re.I):
+        return "Ee direct weather feature current conditions + ee roju forecast matrame. · ఈ ఫీచర్ ఇప్పుడు, ఈరోజు వాతావరణం కోసమే. · Ask for current weather or today's forecast with a city name. Other dates are not verified here."
+    place, defaulted = _weather_place(query)
+    if len(place) > 100:
+        return "City peru matrame cheppu, e.g. Paris, France weather. · నగరం పేరు చెప్పు. · Please give one city, with state/country if needed."
+    geo_url = _WEATHER_GEO + "?" + urlencode({"name": place, "count": 5, "language": "en", "format": "json"})
+    try:
+        geo, _ = _weather_json(geo_url)
+        rows = [r for r in geo.get("results", []) if r.get("feature_code", "").startswith("PPL")]
+    except Exception:
+        return ("City lookup ippudu pani cheyyatledu. Weather numbers guess cheyyanu. · నగరం వివరాలు రాలేదు. · Location service unavailable; try again later.\n\n"
+                "Source: Open-Meteo Geocoding · https://open-meteo.com/en/docs/geocoding-api")
+    if not rows:
+        return ("Aa city ni confirm cheyyalekapoyanu; Rajahmundry ki automatic ga marchaledu. · ఆ నగరం దొరకలేదు. · City not found. Try its English spelling plus state/country, e.g. London, United Kingdom weather.\n\n"
+                "Source: Open-Meteo Geocoding · https://open-meteo.com/en/docs/geocoding-api")
+    loc = rows[0]
+    # If two large same-name places have similar populations, ask rather than pick one silently.
+    if len(rows) > 1 and rows[1].get("population", 0) > max(1, loc.get("population", 0)) * 0.3:
+        choices = list(dict.fromkeys(", ".join(str(r[k]) for k in ("name", "admin1", "country") if r.get(k)) for r in rows[:3]))
+        if len(choices) > 1:
+            return "Oke perutho cities unnayi. State/country tho malli adugu. · ఒకే పేరుతో నగరాలు ఉన్నాయి. · Which city? Add its state/country:\n\n" + "\n\n".join("- " + c for c in choices)
+    label = ", ".join(dict.fromkeys(str(loc[k]) for k in ("name", "admin1", "country") if loc.get(k)))
+    params = {
+        "latitude": loc["latitude"], "longitude": loc["longitude"],
+        "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
+        "timezone": "auto", "forecast_days": 1, "temperature_unit": "celsius", "wind_speed_unit": "kmh",
+        "precipitation_unit": "mm", "timeformat": "iso8601",
+    }
+    weather_url = _WEATHER_API + "?" + urlencode(params)
+    try:
+        data, fetched = _weather_json(weather_url)
+        cur, daily = data.get("current", {}), data.get("daily", {})
+        if not cur.get("time") or not daily.get("time") or data.get("utc_offset_seconds") is None:
+            raise ValueError("Incomplete weather data")
+        offset = timezone(timedelta(seconds=int(data["utc_offset_seconds"])))
+        stamp = datetime.fromisoformat(cur["time"]).replace(tzinfo=offset)
+        checked = datetime.fromisoformat(fetched)
+        # Do not label stale/future or wrong-day payloads as current/today.
+        if not -1800 <= (checked - stamp).total_seconds() <= 10800:
+            raise ValueError("Weather timestamp is stale")
+        if daily["time"][0] != checked.astimezone(offset).date().isoformat():
+            raise ValueError("Today's forecast date not verified")
+    except Exception:
+        return (f"Weather ippudu verify kaaledu ({label}). Number guess cheyyanu. · వాతావరణం నిర్ధారించలేకపోయాను. · Weather service unavailable or data incomplete/stale. Try again later.\n\n"
+                "Source: Open-Meteo · https://open-meteo.com/")
+    def day(key):
+        values = daily.get(key) or []
+        return values[0] if values else None
+    number = _weather_number
+    lines = [f"**Weather / వాతావరణం: {label}**"]
+    if defaulted:
+        lines.append("City cheppaledu kabatti Rajahmundry chupisthunna. · నగరం చెప్పలేదు కాబట్టి రాజమండ్రి. · No city given: defaulting to Rajahmundry, not your GPS location.")
+    else:
+        lines.append("Matched city paina undi. Vere city aithe state/country kuda cheppu. · Matched location shown above; add state/country if it is not the one you meant.")
+    lines.extend([
+        f"**Now / ఇప్పుడు:** {_weather_condition(cur.get('weather_code'))}",
+        f"Temperature / ఉష్ణోగ్రత: {number(cur.get('temperature_2m'), ' °C', -100, 65)}",
+        f"Humidity / తేమ: {number(cur.get('relative_humidity_2m'), '%', 0, 100)}",
+        f"Wind / గాలి: {number(cur.get('wind_speed_10m'), ' km/h', 0, 500)} · direction: {number(cur.get('wind_direction_10m'), '°', 0, 360)} (0° N, 90° E)",
+        f"**Today / ఈరోజు ({daily['time'][0]}, {data.get('timezone', 'city local time')}):** {_weather_condition(day('weather_code'))}",
+        f"Low / కనిష్ఠం: {number(day('temperature_2m_min'), ' °C', -100, 65)} · High / గరిష్ఠం: {number(day('temperature_2m_max'), ' °C', -100, 65)}",
+        f"Rain/precipitation chance / వర్షపాతం అవకాశం (day's maximum): {number(day('precipitation_probability_max'), '%', 0, 100)}",
+        f"Total precipitation forecast / అంచనా వర్షపాతం: {number(day('precipitation_sum'), ' mm', 0, 3000)}",
+        f"Conditions time: {stamp.strftime('%d %b %Y, %I:%M %p')} ({data.get('timezone', 'city local time')}) · {stamp.astimezone(_IST).strftime('%d %b %Y, %I:%M %p IST')}",
+        f"Fetched: {checked.strftime('%d %b %Y, %I:%M %p IST')}",
+        f"Source: [Open-Meteo weather]({weather_url}) · [GeoNames places via Open-Meteo]({geo_url}) · [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)",
+        "Idi model-based snapshot, weather-station measurement kaadu; automatic refresh ledu. · ఇవి మోడల్ అంచనాలు. · Model-based current conditions and forecast, not station observations or a rain guarantee. Precipitation may include snow. Today's maximum chance is NOT the chance for the remaining hours. Ask again to refresh (cache up to 5 minutes).",
+    ])
+    return "\n\n".join(lines)
+
+
 def direct_live_answer(query):
     kind = live_kind(query)
     if not kind:
         return None
     if not live_search:
-        return "Live internet OFF lo undi. Sidebar lo Live internet ON chesi malli adugu. · Turn on Live internet in the sidebar and ask again; I won't guess a current rate or score."
+        return "Live internet OFF lo undi. Sidebar lo Live internet ON chesi malli adugu. · Turn on Live internet in the sidebar and ask again; I won't guess current rates, scores or weather."
     try:
-        return {"gold": gold_answer, "silver": silver_answer, "fuel": fuel_answer, "cricket": cricket_answer}[kind](query)
+        return {"gold": gold_answer, "silver": silver_answer, "fuel": fuel_answer, "cricket": cricket_answer, "weather": weather_answer}[kind](query)
     except Exception:
         return "Live source ippudu verify kaaledu. Malli try cheyyi. · Could not verify the live source right now; no number guessed."
 
