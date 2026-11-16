@@ -1,4 +1,4 @@
-# v58 - dated gold rates and direct cricket snapshots, no paid API
+# v59 - adds dated silver and petrol/diesel snapshots; free public sources only
 # ============================================
 # Veda AI - your own ChatGPT-style chat app
 # Built with Streamlit + Google Gemini (free)
@@ -522,6 +522,12 @@ def live_kind(query):
         return ""
     if re.search(r"\b(?:19|20)\d{2}\b", q) and str(_now_ist().year) not in q:
         return ""
+    # Specific daily commodity answers bypass model-generated numbers.
+    asking_rate = re.search(r"rate|price|cost|today|live|current|now|entha|ivala|ivvala|ippudu|ధర|రేటు|ఎంత|ఈరోజు|నేడు", q)
+    if asking_rate and re.search(r"\b(?:silver|vendi|venndi|vendhi)\b|వెండి", q):
+        return "silver"
+    if asking_rate and re.search(r"\b(?:petrol|diesel|deisel|fuel)\b|పెట్రోల్|పెట్రోలు|డీజిల్|డీజెల్|ఇంధన", q):
+        return "fuel"
     if re.search(r"gold|bangaram|bangaaram|బంగారం|బంగారు", q) and re.search(r"rate|price|cost|today|live|entha|ధర|రేటు|ఎంత", q):
         return "gold"
     score = re.search(r"score|స్కోర్|స్కోరు", q)
@@ -602,6 +608,213 @@ def gold_answer(query):
     if not city:
         lines.append("City specify cheyyaledu kabatti India indicative rate chupisthunna. Mee city vere ayithe peru cheppu. · India rate shown, not a confirmed local city quote.")
     return "\n\n".join(lines[:2]) + "\n\n" + "\n".join(lines[2:])
+
+
+# ---------- v59: direct daily silver and petrol/diesel prices (free pages) ----------
+_SILVER_HOME = "https://www.goodreturns.in/silver-rates/"
+_FUEL_HOME = "https://www.goodreturns.in/{fuel}-price.html"
+_FUEL_AP = "https://www.goodreturns.in/{fuel}-price-in-andhra-pradesh-s2.html"
+
+
+class _PriceTables(_PublicPage):
+    """Collect real table cells, rather than matching an unrelated price in prose."""
+    def __init__(self):
+        super().__init__()
+        self.tables = []
+        self._table = None
+        self._row = None
+        self._cell = None
+
+    def handle_starttag(self, tag, attrs):
+        super().handle_starttag(tag, attrs)
+        if self.hidden:
+            return
+        if tag == "table":
+            self._table = []
+        elif tag == "tr" and self._table is not None:
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = []
+
+    def handle_data(self, data):
+        super().handle_data(data)
+        if not self.hidden and self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag):
+        if not self.hidden:
+            if tag in ("td", "th") and self._cell is not None:
+                self._row.append(_tidy(" ".join(self._cell)))
+                self._cell = None
+            elif tag == "tr" and self._row is not None:
+                self._table.append(self._row)
+                self._row = None
+            elif tag == "table" and self._table is not None:
+                self.tables.append(self._table)
+                self._table = None
+        super().handle_endtag(tag)
+
+
+def _price_date(page):
+    # Only the title/H1 can date the main quote. Never a news item or footer.
+    title = _tidy(" ".join(page.title + page.heading))
+    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(\d{4})\b", title, re.I)
+    if not match:
+        raise ValueError("Source date missing")
+    stamp = " ".join(match.groups())
+    for fmt in ("%d %B %Y", "%d %b %Y"):
+        try:
+            day = datetime.strptime(stamp, fmt).date()
+            break
+        except ValueError:
+            pass
+    else:
+        raise ValueError("Source date invalid")
+    if day > _now_ist().date():
+        raise ValueError("Future date rejected")
+    return day
+
+
+def _price_stamp(day, checked):
+    status = "Today's published rate" if day == _now_ist().date() else "OLD RATE, not verified for today"
+    fetched = datetime.fromisoformat(checked).strftime("%d %b %Y, %I:%M %p IST")
+    return f"Source date: {day.strftime('%d %b %Y')} · {status}\n\nFetched: {fetched} (cache up to 60 seconds)."
+
+
+def _outside_india(query):
+    return any(_has_word(query, x) for x in (
+        "dubai", "uae", "usa", "uk", "singapore", "saudi", "qatar", "london",
+        "america", "united states", "canada", "australia", "pakistan", "nepal",
+        "sri lanka", "new york", "paris", "europe", "germany"))
+
+
+def _silver_record(html, location):
+    page = _parse_public(html)
+    heading = _tidy(" ".join(page.heading)).lower()
+    expected = location.replace("-", " ")
+    if heading not in (f"silver price in {expected}".lower(), f"silver rate in {expected}".lower()):
+        raise ValueError("Silver location not confirmed")
+    day = _price_date(page)
+    text = _tidy(" ".join(page.text))
+    match = re.search(r"The price of silver in\s+(.+?)\s+today is\s+₹\s*([\d,.]+)\s+per gram and\s+₹\s*([\d,.]+)\s+per kilogram", text, re.I)
+    if not match or match.group(1).strip().lower() != expected.lower():
+        raise ValueError("Silver sentence changed")
+    gram, kg = (float(match.group(i).replace(",", "")) for i in (2, 3))
+    if not (0 < gram < 100000 and abs(kg - gram * 1000) <= 1):
+        raise ValueError("Silver gram/kg consistency failed")
+    return {"date": day, "gram": gram, "kg": kg, "location": match.group(1).strip()}
+
+
+def silver_answer(query):
+    q = query.lower()
+    if _outside_india(q):
+        return "Ee direct silver feature India INR rates kosam matrame. · This direct silver feature covers India INR rates only, not that country's price."
+    city = next((c for c, names in _CITY_ALIASES.items() if any(_has_word(q, n) for n in names)), "")
+    location = city or "India"
+    url = _SILVER_HOME + city + ".html" if city else _SILVER_HOME
+    try:
+        html, checked = _public_get(url)
+        r = _silver_record(html, location)
+    except Exception:
+        return ("Silver rate ippudu verify kaaledu. Number guess cheyyanu. · Could not verify the silver rate now; I won't guess.\n\n"
+                f"Direct source: {url}\n\nCity peru tho malli adugu. · Try again later or with a supported city name.")
+    lines = [f"### Silver rate · వెండి ధర ({r['location']})", _price_stamp(r["date"], checked),
+             "| Quantity | Published indicative rate |\n|---|---:|\n"
+             f"| 1 gram | ₹{r['gram']:,.2f} |\n| 1 kg (1,000 grams) | ₹{r['kg']:,.2f} |",
+             "Ivi daily published indicative rates matrame, live exchange tick kaadu. · Not a jeweller quote or a live exchange tick. Final bill can differ with purity, GST, making charges and other charges.",
+             f"Source: {url}"]
+    if not city:
+        lines.append("India indicative rate chupisthunna, mee city quote kaadu. · India indicative view only; any requested local city rate is NOT verified. Try a supported city, e.g. Rajahmundry silver rate.")
+    return "\n\n".join(lines)
+
+
+def _fuel_record(html, fuel, region):
+    page = _PriceTables()
+    page.feed(html)
+    expected = f"{fuel} Price in {region}"
+    if _tidy(" ".join(page.heading)).lower() != expected.lower():
+        raise ValueError("Fuel type/location not confirmed")
+    day = _price_date(page)
+    text = _tidy(" ".join(page.text))
+    if not re.search(r"per litre|/\s*Ltr", text, re.I):
+        raise ValueError("Fuel unit not confirmed")
+    rows = {}
+    accepting = False
+    for table in page.tables:
+        if not table or len(table[0]) < 3:
+            continue
+        header = [cell.lower() for cell in table[0]]
+        # India city table or the AP district/city table, never history/state tables.
+        if header[:3] == ["city", "price", "price change"]:
+            accepting = True
+            data_rows = table[1:]
+        elif accepting and all(len(row) == 3
+                and re.fullmatch(r"₹\s*[\d,]+(?:\.\d+)?", row[1])
+                and re.fullmatch(r"[+-]?\s*[\d,.]+", row[2]) for row in table):
+            # Goodreturns splits long current-price tables into two tables;
+            # the continuation has no header. Historical tables fail this shape.
+            data_rows = table
+        elif accepting:
+            break
+        else:
+            continue
+        for row in data_rows:
+            if len(row) < 2:
+                continue
+            m = re.fullmatch(r"₹\s*([\d,]+(?:\.\d+)?)", row[1])
+            if m:
+                value = float(m.group(1).replace(",", ""))
+                if not (1 < value < 1000):
+                    raise ValueError("Fuel price invalid")
+                rows[row[0].lower()] = (row[0], value)
+    if not rows:
+        raise ValueError("Fuel table changed")
+    return {"date": day, "rows": rows}
+
+
+def fuel_answer(query):
+    q = query.lower()
+    if _outside_india(q):
+        return "Ee direct petrol/diesel feature India INR rates kosam matrame. · This direct fuel feature covers India INR prices only, not that country's price."
+    city = next((c for c, names in _CITY_ALIASES.items() if any(_has_word(q, n) for n in names)), "")
+    ap_city = city in {"rajahmundry", "vijayawada", "visakhapatnam", "guntur", "kakinada", "tirupati", "nellore", "amaravati", "ongole"}
+    ap = ap_city or any(_has_word(q, x) for x in ("andhra", "andhra pradesh", "ap", "ఆంధ్ర", "ఆంధ్రప్రదేశ్", "east godavari", "తూర్పు గోదావరి"))
+    region = "Andhra Pradesh" if ap else "India"
+    base = _FUEL_AP if ap else _FUEL_HOME
+    petrol = bool(re.search(r"petrol|పెట్రోల్|పెట్రోలు", q))
+    diesel = bool(re.search(r"diesel|deisel|డీజిల్|డీజెల్", q))
+    fuels = (["petrol"] if petrol and not diesel else ["diesel"] if diesel and not petrol else ["petrol", "diesel"])
+    target = city.replace("-", " ")
+    if city == "delhi":
+        target = "new delhi"
+    if city == "rajahmundry" or _has_word(q, "east godavari") or _has_word(q, "తూర్పు గోదావరి"):
+        target = "east godavari"
+    lines = [f"### Petrol / Diesel · ఇంధన ధరలు ({region})"]
+    if city == "rajahmundry":
+        lines.append("Rajahmundry city/pump rate verify kaaledu. East Godavari DISTRICT indicative rate matrame chupisthunna, Rajahmundry exact rate kaadu. · District fallback, NOT a verified Rajahmundry pump quote.")
+    else:
+        lines.append("Named city/district indicative rates only. India antha oke rate kaadu. · There is no single all-India pump price; these are selected named locations, not a national average.")
+    for fuel in fuels:
+        url = base.format(fuel=fuel)
+        try:
+            html, checked = _public_get(url)
+            r = _fuel_record(html, fuel, region)
+            if target and target in r["rows"]:
+                keys = [target]
+            else:
+                keys = (["east godavari", "vijayawada", "visakhapatnam"] if ap else ["new delhi", "mumbai", "chennai", "hyderabad"])
+                keys = [k for k in keys if k in r["rows"]]
+                if city or not ap:
+                    lines.append(f"{fuel.title()}: requested local place not verified or not specified. Selected {region} locations below are NOT that local quote.")
+            if not keys:
+                raise ValueError("No selected place found")
+            lines += [f"**{fuel.title()} · INR per litre**", _price_stamp(r["date"], checked),
+                      "| Source location | ₹ / litre |\n|---|---:|\n" + "\n".join(f"| {r['rows'][k][0]} | ₹{r['rows'][k][1]:,.2f} |" for k in keys),
+                      f"Source: {url}"]
+        except Exception:
+            lines.append(f"{fuel.title()} rate ippudu verify kaaledu. Number guess cheyyanu. · Could not verify {fuel} now; no number guessed.\n\nDirect source: {url}")
+    lines.append("Ivi daily published snapshots, automatic refresh kaadu. · Published daily snapshots, not an oil-company or individual pump quote. Prices can vary by location, outlet and fuel grade. Ask again for a fresh check.")
+    return "\n\n".join(lines)
 
 
 _TEAM_ALIASES = {
@@ -747,7 +960,7 @@ def direct_live_answer(query):
     if not live_search:
         return "Live internet OFF lo undi. Sidebar lo Live internet ON chesi malli adugu. · Turn on Live internet in the sidebar and ask again; I won't guess a current rate or score."
     try:
-        return gold_answer(query) if kind == "gold" else cricket_answer(query)
+        return {"gold": gold_answer, "silver": silver_answer, "fuel": fuel_answer, "cricket": cricket_answer}[kind](query)
     except Exception:
         return "Live source ippudu verify kaaledu. Malli try cheyyi. · Could not verify the live source right now; no number guessed."
 
@@ -953,7 +1166,7 @@ def reply_to(user_text, attach_bytes=None, attach_mime=None, attach_name=None):
             st.caption(f"📎 {attach_name}")
         st.markdown(user_text)
 
-    # Exact gold/score snapshots bypass AI rewriting, so quota errors cannot change numbers.
+    # Exact rate/score snapshots bypass AI rewriting, so quota errors cannot change numbers.
     if not attach_bytes and not re.search(r"https?://", user_text):
         with st.spinner("Live source check chesthunna... · Checking live source..."):
             direct_reply = direct_live_answer(user_text)
