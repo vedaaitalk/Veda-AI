@@ -1,3 +1,4 @@
+# v61 - DIAGNOSTIC ONLY: shows a small 'Voice check' line under Read aloud audio (which voice ran + safe error). No other change.
 # v60 - adds no-key current weather and today forecast; preserves v59 rates/cricket
 # ============================================
 # Veda AI - your own ChatGPT-style chat app
@@ -1212,6 +1213,28 @@ def web_context(query):
             "Mention the source site name.]\n" + "\n".join(lines) + "\n[END OF SEARCH RESULTS]\n\nUser question: ")
 
 
+def _voice_err_label(e):
+    """v61 diagnostic: safe label only (category + exception class). Never includes the raw error text."""
+    m = (type(e).__name__ + " " + str(e)).lower()
+    if "429" in m or "resource_exhausted" in m or "quota" in m:
+        cat = "quota or rate limit"
+    elif "404" in m or "not_found" in m or "not found" in m:
+        cat = "model not found"
+    elif "400" in m or "invalid_argument" in m or "unsupported" in m:
+        cat = "request rejected"
+    elif "401" in m or "403" in m or "permission" in m or "api key" in m or "unauthenticated" in m:
+        cat = "key or permission"
+    elif "timeout" in m or "timed out" in m or "connect" in m:
+        cat = "network or timeout"
+    elif "index" in m or "inline_data" in m or "nonetype" in m or "list" in m:
+        cat = "no audio returned"
+    elif "500" in m or "503" in m or "unavailable" in m or "internal" in m:
+        cat = "Google server error"
+    else:
+        cat = "other"
+    return cat + " (" + type(e).__name__ + ")"
+
+
 def play_voice(text):
     spoken = clean_for_speech(text)
     if not spoken:
@@ -1221,14 +1244,18 @@ def play_voice(text):
             if True:  # super natural voice is the default
                 try:
                     st.audio(gemini_voice(spoken, VOICE_NAME), format="audio/wav", autoplay=True)
+                    st.caption("🔎 Voice check: Gemini voice used (" + str(VOICE_NAME) + ")")  # v61 diagnostic
                     return
                 except Exception as ge:
-                    pass  # quietly use the free natural voice
+                    # v61 diagnostic: remember only a safe category + exception class (never the raw message)
+                    st.session_state["voice_check_note"] = _voice_err_label(ge)
             audio = natural_voice(spoken, VOICE_GENDER)
         if not audio:
             raise RuntimeError("empty audio")
         st.audio(audio, format="audio/mp3", autoplay=True)
-    except Exception:
+        st.caption("🔎 Voice check: backup voice used. Gemini problem: " + str(st.session_state.get("voice_check_note", "unknown")))  # v61 diagnostic
+    except Exception as _e2:
+        st.caption("🔎 Voice check: browser voice used. Problem: " + _voice_err_label(_e2))  # v61 diagnostic
         speak_text(spoken)  # fallback: browser voice
 
 
